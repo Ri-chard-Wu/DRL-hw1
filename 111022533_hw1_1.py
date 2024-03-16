@@ -48,13 +48,10 @@ class GridworldEnv():
     def isTerminal(self, s):        
         return s in self.terminal_st
 
-env = GridworldEnv()
+ 
 
 
-
-
-
-def policy_eval(policy, env, discount_factor=0.9, theta=0.00001):
+def policy_eval(policy, env, gamma=0.9, theta=0.00001):
  
     V = np.zeros(env.nS)
     while True:
@@ -64,7 +61,7 @@ def policy_eval(policy, env, discount_factor=0.9, theta=0.00001):
             v = 0
             for a, action_prob in enumerate(policy[s]):
                 for  prob, next_state, reward, done in env.P[s][a]:
-                    v += action_prob * prob * (reward + discount_factor * V[next_state])
+                    v += action_prob * prob * (reward + gamma * V[next_state])
             delta = max(delta, np.abs(v - V[s]))
             V[s] = v
         
@@ -74,19 +71,21 @@ def policy_eval(policy, env, discount_factor=0.9, theta=0.00001):
     return np.array(V)
  
 
+env = GridworldEnv()
+policy = np.ones([env.nS, env.nA]) / env.nA
+gamma = 0.1
 
-def policy_improvement(env):
-
-    policy = np.ones([env.nS, env.nA]) / env.nA
-
-    V = policy_eval(policy, env)
-
-    return V
-
-  
-
-
-v = policy_improvement(env)
+v = policy_eval(policy, env, gamma)
  
 print(np.reshape(v, (4, 4)))
 
+
+s = ""
+for st, _v in enumerate(v):
+    if(env.isTerminal(st)): continue
+    s += '{0:.2f} '.format(_v)
+s = s[:-1]
+
+f = open(f"111022533_hw1_1_data_gamma_{gamma}", "w")
+f.write(s)
+f.close()
