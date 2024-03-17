@@ -1,5 +1,6 @@
 import gymnasium as gym
 import numpy as np
+import torch
 # # import gym
 # env = gym.make("LunarLander-v2", render_mode="rgb_array")
 # env.action_space.seed(42)
@@ -22,6 +23,8 @@ MAX_LEARNING_RATE = 0.5
 env = gym.make('Taxi-v3') 
 env.action_space.seed(42)
 
+nA = 6
+nS = 500
 
 
  
@@ -37,14 +40,18 @@ class Agent:
         self.discount_factor = discount_factor
         self.nA = nA
         self.nS = nS
-        self.q_table = np.zeros((self.nS, self.nA))
-
+        # self.q_table = np.zeros((self.nS, self.nA))
+        self.q_table = torch.zeros([self.nS, self.nA], dtype=torch.float32)
+        
+    def load_table(self, path):
+        self.q_table = torch.load(path)
     
     def select_action(self, state): 
         if np.random.rand() < self.exploring_rate:
             action = np.random.choice(self.nA)  # Select a random action
         else:
-            action = np.argmax(self.q_table[state])  # Select the action with the highest q
+            # action = np.argmax(self.q_table[state]) 
+            action = torch.argmax(self.q_table[state]).item()
         return action
 
     def update_policy(self, state, action, reward, state_prime, action_prime): 
@@ -142,76 +149,150 @@ class Renderer:
         for sa in sa_all:
             self.render(sa)
 
-
-
-nA = 6
-nS = 500
+ 
 renderer = Renderer(nA, nS, env)
-agent = Agent(nA, nS)
- 
- 
-reward_per_epoch = []
-lifetime_per_epoch = []
-exploring_rates = []
-learning_rates = []
-print_every_episode = 1
-show_gif_every_episode = 5000
-NUM_EPISODE = 100
-for episode in range(0, NUM_EPISODE):
- 
-    observation, info = env.reset(seed=42) 
-    action = agent.select_action(observation) 
-    
-    if episode % print_every_episode == 0:
-        agent.shutdown_explore()
- 
-    cum_reward = 0  
-    t = 0
-    s_a_pairs = [[observation, action]]
 
-    while(1):  
-        observation_next, reward, terminated, truncated, info = env.step(action) 
+
+def train(save_path=None):
+
+    agent = Agent(nA, nS)
+    
+    reward_per_epoch = []
+    lifetime_per_epoch = []
+    exploring_rates = []
+    learning_rates = []
+
+    print_every_episode = 1
+    show_gif_every_episode = 5000
+    NUM_EPISODE = 100
+    for episode in range(0, NUM_EPISODE):
+    
+        observation, info = env.reset(seed=42) 
+        action = agent.select_action(observation) 
         
-        cum_reward += reward
-
-        if terminated or truncated: 
-            s_a_pairs.append([observation_next, None])            
-            break                
+        if episode % print_every_episode == 0:
+            agent.shutdown_explore()
     
-        action_next = agent.select_action(observation_next) 
-        agent.update_policy(observation, action, reward, observation_next, action_next)
+        cum_reward = 0  
+        t = 0
+        s_a_pairs = [[observation, action]]
+
+        while(1):  
+            observation_next, reward, terminated, truncated, info = env.step(action) 
+            
+            cum_reward += reward
+
+            if terminated or truncated: 
+                s_a_pairs.append([observation_next, None])            
+                break                
+        
+            action_next = agent.select_action(observation_next) 
+            agent.update_policy(observation, action, reward, observation_next, action_next)
+    
+            observation = observation_next
+            action = action_next
+            s_a_pairs.append([observation, action])
+            t += 1
+
+
+    
+        agent.update_parameters(episode)
+
+        if episode % print_every_episode == 0:
+            print("eps: {}, len: {}, cumu reward: {}, exploring rate: {}, learning rate: {}".format(
+                episode,
+                t,
+                cum_reward,
+                agent.exploring_rate,
+                agent.learning_rate
+            ))
+            reward_per_epoch.append(cum_reward)
+            exploring_rates.append(agent.exploring_rate)
+            learning_rates.append(agent.learning_rate)
+            lifetime_per_epoch.append(t)
+
+        if episode == NUM_EPISODE-1:
+            renderer.render_all(s_a_pairs)
+
+    if(save_path is not None):
+        torch.save(agent.q_table, save_path)
+        print(agent.q_table)
+
+
+
+# train('111022533_hw1_2_taxi_sarsa.pth')
+# train()
+
+
+
+def evaluate(path):
+
+    # agent = Agent(nA, nS)
+    # agent.load_table(path)
+    # agent.shutdown_explore()
+
+    agent = torch.load(path)
+    print(agent)
+    cum_reward_avg = 0
+    n = 10
+    for i in range(n):
+        
+        observation, info = env.reset(seed=42) 
+
+        cum_reward = 0          
+        t = 0
+      
+        while(1):  
+
+            action = torch.argmax(agent[observation]).item()
+            
+            observation_next, reward, terminated, truncated, info = env.step(action) 
+            
+            cum_reward += reward
+
+            if terminated or truncated: 
+                         
+                break                
+        
+            t += 1
+            observation = observation_next
+
+        cum_reward_avg += cum_reward
+        print(f'cum_reward: {cum_reward}, t: {t}')
+    cum_reward_avg = cum_reward_avg / n
+    print(f'cum_reward_avg: {cum_reward_avg}')
+
+
+
+evaluate('111022533_hw1_2_taxi_sarsa.pth')
  
-        observation = observation_next
-        action = action_next
-        s_a_pairs.append([observation, action])
-        t += 1
-
-
- 
-    agent.update_parameters(episode)
-
-    if episode % print_every_episode == 0:
-        print("eps: {}, len: {}, cumu reward: {}, exploring rate: {}, learning rate: {}".format(
-            episode,
-            t,
-            cum_reward,
-            agent.exploring_rate,
-            agent.learning_rate
-        ))
-        reward_per_epoch.append(cum_reward)
-        exploring_rates.append(agent.exploring_rate)
-        learning_rates.append(agent.learning_rate)
-        lifetime_per_epoch.append(t)
-
-    if episode == NUM_EPISODE-1:
-        renderer.render_all(s_a_pairs)
 
 
 
 
 
 
-print(agent.q_table)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# print(agent.q_table)
 
 # """
 # print([i for i in env.unwrapped.decode(observation)]):
