@@ -21,7 +21,7 @@ MAX_LEARNING_RATE = 0.5
 
 # https://www.gymlibrary.dev/environments/toy_text/taxi/
 env = gym.make('Taxi-v3') 
-env.action_space.seed(42)
+env.action_space.seed()
 
 nA = 6
 nS = 500
@@ -164,10 +164,10 @@ def train(save_path=None):
 
     print_every_episode = 1
     show_gif_every_episode = 5000
-    NUM_EPISODE = 100
+    NUM_EPISODE = 5000
     for episode in range(0, NUM_EPISODE):
     
-        observation, info = env.reset(seed=42) 
+        observation, info = env.reset() 
         action = agent.select_action(observation) 
         
         if episode % print_every_episode == 0:
@@ -214,10 +214,11 @@ def train(save_path=None):
         if episode == NUM_EPISODE-1:
             renderer.render_all(s_a_pairs)
 
+    print(f'reward_per_epoch (sarsa): {reward_per_epoch}')
     if(save_path is not None):
+        print('save model')
         torch.save(agent.q_table, save_path)
-        print(agent.q_table)
-
+      
 
 
 # train('111022533_hw1_2_taxi_sarsa.pth')
@@ -226,7 +227,7 @@ def train(save_path=None):
 
 
 def evaluate(path):
-
+    # print('c')
     # agent = Agent(nA, nS)
     # agent.load_table(path)
     # agent.shutdown_explore()
@@ -237,7 +238,7 @@ def evaluate(path):
     n = 10
     for i in range(n):
         
-        observation, info = env.reset(seed=42) 
+        observation, info = env.reset() 
 
         cum_reward = 0          
         t = 0
@@ -263,9 +264,9 @@ def evaluate(path):
     print(f'cum_reward_avg: {cum_reward_avg}')
 
 
-
+# print('a')
 evaluate('111022533_hw1_2_taxi_sarsa.pth')
- 
+# print('b')
 
 
 
@@ -285,38 +286,3 @@ evaluate('111022533_hw1_2_taxi_sarsa.pth')
 
 
 
-
-
-
-
-
-
-
-# print(agent.q_table)
-
-# """
-# print([i for i in env.unwrapped.decode(observation)]):
-
-#     taxi_row, taxi_col, passenger_location, destination
-
-#     Passenger locations:
-
-#     0: R(ed)
-#     1: G(reen)
-#     2: Y(ellow)
-#     3: B(lue)
-#     4: in taxi
-
-#     Destinations:
-
-#     0: R(ed)
-#     1: G(reen)
-#     2: Y(ellow)
-#     3: B(lue)
-# """
-# print([i for i in env.unwrapped.decode(observation)])
-
-
-# print('`````````````````')
-# print(info)
- 

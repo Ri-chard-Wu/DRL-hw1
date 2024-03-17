@@ -10,7 +10,7 @@ MAX_LEARNING_RATE = 0.5
 
 # https://www.gymlibrary.dev/environments/toy_text/taxi/
 env = gym.make('Taxi-v3') 
-env.action_space.seed(42)
+env.action_space.seed()
 
 
 nA = 6
@@ -151,10 +151,10 @@ def train(save_path=None):
     learning_rates = []
     print_every_episode = 1
     show_gif_every_episode = 5000
-    NUM_EPISODE = 60
+    NUM_EPISODE = 2500
     for episode in range(0, NUM_EPISODE):
     
-        observation, info = env.reset(seed=42) 
+        observation, info = env.reset() 
 
         # for every 500 episodes, shutdown exploration to see performance of greedy action
         if episode % print_every_episode == 0:
@@ -183,13 +183,15 @@ def train(save_path=None):
         agent.update_parameters(episode)
 
         if episode % print_every_episode == 0:
-            print("Episode {} finished after {} time steps, cumulated reward: {}, exploring rate: {}, learning rate: {}".format(
+     
+            print("eps: {}, len: {}, cumu reward: {}, exploring rate: {}, learning rate: {}".format(
                 episode,
                 t,
                 cum_reward,
                 agent.exploring_rate,
                 agent.learning_rate
             ))
+
             reward_per_epoch.append(cum_reward)
             exploring_rates.append(agent.exploring_rate)
             learning_rates.append(agent.learning_rate)
@@ -202,15 +204,16 @@ def train(save_path=None):
             # display(clip.ipython_display(fps=60, autoplay=1, loop=1))
             renderer.render_all(s_a_pairs)
 
-
+    print(f'reward_per_epoch (qlearning): {reward_per_epoch}')
     if(save_path is not None):
+        print('save model')
         torch.save(agent.q_table, save_path)
-        # print(agent.q_table)
+      
 
 
 
 # train('111022533_hw1_2_taxi_qlearning.pth')
- 
+# train()
 
 
 
@@ -228,7 +231,7 @@ def evaluate(path):
     n = 10
     for i in range(n):
         
-        observation, info = env.reset(seed=42) 
+        observation, info = env.reset() 
 
         cum_reward = 0          
         t = 0
@@ -252,8 +255,6 @@ def evaluate(path):
         print(f'cum_reward: {cum_reward}, t: {t}')
     cum_reward_avg = cum_reward_avg / n
     print(f'cum_reward_avg: {cum_reward_avg}')
-
-
 
 evaluate('111022533_hw1_2_taxi_qlearning.pth')
  
