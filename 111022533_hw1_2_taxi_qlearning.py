@@ -47,10 +47,10 @@ class Agent:
             action = np.argmax(self.q_table[state])  # Select the action with the highest q
         return action
 
-    def update_policy(self, state, action, reward, state_prime, action_prime): 
-        # best_q = np.max(self.q_table[state_prime])
+    def update_policy(self, state, action, reward, state_prime): 
+        best_q = np.max(self.q_table[state_prime])
         self.q_table[state][action] += self.learning_rate * (
-            reward + self.discount_factor * self.q_table[state_prime][action_prime] - self.q_table[state][action])
+            reward + self.discount_factor * best_q - self.q_table[state][action])
 
     def update_parameters(self, episode):
         self.exploring_rate = \
@@ -156,42 +156,39 @@ exploring_rates = []
 learning_rates = []
 print_every_episode = 1
 show_gif_every_episode = 5000
-NUM_EPISODE = 100
+NUM_EPISODE = 60
 for episode in range(0, NUM_EPISODE):
  
     observation, info = env.reset(seed=42) 
-    action = agent.select_action(observation) 
-    
+
+    # for every 500 episodes, shutdown exploration to see performance of greedy action
     if episode % print_every_episode == 0:
         agent.shutdown_explore()
  
     cum_reward = 0  
     t = 0
-    s_a_pairs = [[observation, action]]
+    s_a_pairs = []
 
-    while(1):  
+    while(1): 
+        action = agent.select_action(observation) 
         observation_next, reward, terminated, truncated, info = env.step(action) 
-        
         cum_reward += reward
-
-        if terminated or truncated: 
-            s_a_pairs.append([observation_next, None])            
-            break                
     
-        action_next = agent.select_action(observation_next) 
-        agent.update_policy(observation, action, reward, observation_next, action_next)
+        agent.update_policy(observation, action, reward, observation_next)
  
-        observation = observation_next
-        action = action_next
         s_a_pairs.append([observation, action])
+        observation = observation_next
         t += 1
 
-
+        if terminated or truncated: 
+            s_a_pairs.append([observation, None])
+            print(f'done reward: {reward}')
+            break
  
     agent.update_parameters(episode)
 
     if episode % print_every_episode == 0:
-        print("eps: {}, len: {}, cumu reward: {}, exploring rate: {}, learning rate: {}".format(
+        print("Episode {} finished after {} time steps, cumulated reward: {}, exploring rate: {}, learning rate: {}".format(
             episode,
             t,
             cum_reward,
@@ -203,7 +200,11 @@ for episode in range(0, NUM_EPISODE):
         learning_rates.append(agent.learning_rate)
         lifetime_per_epoch.append(t)
 
+    # for every 5000 episode, record an animation
     if episode == NUM_EPISODE-1:
+        # print("len frames:", len(frames))
+        # clip = make_anim(frames, fps=60, true_image=True).rotate(-90)
+        # display(clip.ipython_display(fps=60, autoplay=1, loop=1))
         renderer.render_all(s_a_pairs)
 
 
