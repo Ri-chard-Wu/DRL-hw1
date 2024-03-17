@@ -8,9 +8,6 @@ MAX_EXPLORING_RATE = 0.5
 MIN_LEARNING_RATE = 0.5
 MAX_LEARNING_RATE = 0.5
 
-# https://www.gymlibrary.dev/environments/toy_text/taxi/
-env = gym.make('Taxi-v3') 
-env.action_space.seed()
 
 
 nA = 9
@@ -31,25 +28,39 @@ class TicTacToe:
 
         observation = np.hstack(([self.player], self.map.flatten()))
         info = {'winner': 0}
+        self.nSpace = 9
         return observation, info
 
     def _hasLine(self):
 
-    def _hasNoSpace(self):
+        def reduce(v): return int(abs(sum(v)))
+
+        for i in range(3):
+            if(reduce(self.map[i, :]) == 3): return True
+            if(reduce(self.map[:, i]) == 3): return True
+  
+        v = [self.map[i, i] for i in range(3)]
+        if(reduce(v) == 3): return True
+
+        v = [self.map[i, 2-i] for i in range(3)]
+        if(reduce(v) == 3): return True
+
+        return False
+
 
     def place(self, sym, pos):
         x = pos[0]
         y = pos[1]
         
         a = self.map[y, x]
-        if(a != 0): return False
+        if(a != 0): 
+            print("[place()] Warning: invalide action.")
+            return False
         else:
             self.map[y, x] = sym
             return True
     
-    # def _get_observation(self):         
-    #     return np.hstack(([self.player], self.map.flatten()))
-
+    
     def step(self, action):
         '''
             return: return observation, reward, terminated, False, None
@@ -57,8 +68,8 @@ class TicTacToe:
         
         curPlayer = self.player 
         nextPlayer = -self.player
-        self.player = nextPlayer
-
+        # self.player = nextPlayer
+ 
         terminated = False
         reward = 0 
         info = {'winner': 0}
@@ -68,17 +79,31 @@ class TicTacToe:
         observation = np.hstack(([nextPlayer], self.map.flatten()))
 
         if(not isOk):
-            reward = -5 
+            observation[0] = curPlayer
         else:
+            self.nSpace -= 1
+
             if(self._hasLine()):                
                 info['winner'] = curPlayer
-                reward = 1
+                reward = 10
                 terminated = True
-            elif(self._hasNoSpace()):
+            elif(self.nSpace == 0):
                 info['winner'] = 0
                 terminated = True
 
+        self.player = observation[0]
         return observation, reward, terminated, False, info
+
+    def render(self):
+        symMap = {1: 'x', -1: 'o', 0: '-'}                    
+        for r in self.map:  
+            s = ''.join([symMap[sym] for sym in r])
+            print(s)
+        print()
+
+
+
+
 
 
 class Agent:
@@ -95,15 +120,15 @@ class Agent:
         self.q_table = torch.zeros([self.nS, self.nA], dtype=torch.float32)
 
         self._encodeAction = {
-            [0, 0]: 0,
-            [1, 0]: 1,
-            [2, 0]: 2,
-            [0, 1]: 3,
-            [1, 1]: 4,
-            [2, 1]: 5, 
-            [0, 2]: 6,
-            [1, 2]: 7,
-            [2, 2]: 8                    
+            (0, 0): 0,
+            (1, 0): 1,
+            (2, 0): 2,
+            (0, 1): 3,
+            (1, 1): 4,
+            (2, 1): 5, 
+            (0, 2): 6,
+            (1, 2): 7,
+            (2, 2): 8                    
         }
 
         self._decodeAction = {
@@ -128,7 +153,7 @@ class Agent:
  
 
     def encodeAction(self, a): 
-        return self._encodeAction[a]
+        return self._encodeAction[(a[0], a[1])]
 
     def decodeAction(self, aId): 
         return self._decodeAction[aId]
@@ -140,60 +165,57 @@ class Agent:
             else: actionMask.append(False)
         return actionMask
 
-
-
-    # state: 1D numpy array, shape (10, ).
+ 
     def select_action(self, state): 
 
         stateId = self.encodeState(state)
+        actionMask = self._get_action_mask(state) 
 
-        if np.random.rand() < self.exploring_rate:
-            action = np.random.choice(self.nA)  # Select a random action
-        else:       
-            actionMask = self._get_action_mask(state) 
+        if np.random.rand() < self.exploring_rate: 
+            action = np.random.choice(np.arange(self.nA)[actionMask])  
+        else:                   
             action = torch.argmax(self.q_table[stateId, actionMask]).item()
         return self.decodeAction(action)
 
-    def update_policy(self, state, action, reward, statePrime): 
-
-        stateId = self.encodeState(state)
-        statePrimeId = self.encodeState(statePrime)
-        actionId = self.encodeAction(action)
-
-        best_q = torch.max(self.q_table[statePrimeId])
-
-        self.q_table[stateId][actionId] += self.learning_rate * (
-            reward + self.discount_factor * best_q - self.q_table[stateId][actionId])
-    
+     
     def update_policy_MC(self, totalReturn, trajectory):
 
         target = totalReturn
         for s, a in reversed(trajectory):
-            
+
             sId = self.encodeState(s)
             aId = self.encodeAction(a)
             
             self.q_table[sId][aId] += self.learning_rate * (target - self.q_table[sId][aId])
 
             target = self.discount_factor * target
-
-            
-
+ 
     def update_parameters(self, episode):
         self.exploring_rate = \
                 max(MIN_EXPLORING_RATE, min(MAX_EXPLORING_RATE, 0.99**((episode) / 30)))
         self.learning_rate = \
                 max(MIN_LEARNING_RATE, min(MAX_LEARNING_RATE, 0.99 ** ((episode) / 30)))
 
-    def shutdown_explore(self):
-        # make action selection greedy
+    def shutdown_explore(self): 
         self.exploring_rate = 0
 
- 
+    def load(self, path):
+        self.q_table = torch.load(path)
 
-def train(save_path=None):
+
+
+env = TicTacToe()
+
+
+
+
+
+def train(load_path=None, save_path=None):
+
 
     agent = Agent(nA, nS)
+    if(load_path is not None):
+        agent.load(load_path)
     
     
     reward_per_epoch = []
@@ -202,8 +224,9 @@ def train(save_path=None):
     learning_rates = []
 
     print_every_episode = 1
+    save_every_episode = 500
     show_gif_every_episode = 5000
-    NUM_EPISODE = 2500
+    NUM_EPISODE = 10000
 
     for episode in range(NUM_EPISODE):
     
@@ -212,7 +235,7 @@ def train(save_path=None):
         # if episode % print_every_episode == 0:
         #     agent.shutdown_explore()
     
-        reward = {1:0, -1:0}   
+        
         trajectory = {1:[], -1:[]}
         
         while(1): 
@@ -226,13 +249,15 @@ def train(save_path=None):
             trajectory[player].append([observation, action])
 
             if terminated:  
+
                 winner = info['winner']
+                reward = {1:0, -1:0}   
                 if(winner != 0):
                     reward[winner] = 10
                     reward[-winner] = -10
 
-                agent.update_policy_MC(reward[winner], trajectory[winner])
-                agent.update_policy_MC(reward[-winner], trajectory[-winner])
+                agent.update_policy_MC(reward[1], trajectory[1])
+                agent.update_policy_MC(reward[-1], trajectory[-1])
 
                 break
 
@@ -242,7 +267,12 @@ def train(save_path=None):
         agent.update_parameters(episode)
 
         # if episode % print_every_episode == 0:
-     
+        if episode % save_every_episode == 0:
+            print(f'eps{episode} saved model')
+            torch.save(agent.q_table, save_path)
+
+
+
         #     print("eps: {}, len: {}, cumu reward: {}, exploring rate: {}, learning rate: {}".format(
         #         episode,
         #         t,
@@ -260,6 +290,7 @@ def train(save_path=None):
         #     renderer.render_all(s_a_pairs)
 
     # print(f'reward_per_epoch (qlearning): {reward_per_epoch}')
+
     if(save_path is not None):
         print('saved model')
         torch.save(agent.q_table, save_path)
@@ -267,10 +298,45 @@ def train(save_path=None):
 
 
 
-# train('111022533_hw1_3_data')
+# train(save_path='111022533_hw1_3_data')
 # train()
 
 
 
+def evaluate(path=None):
 
+    agent = Agent(nA, nS)
+    # agent.load(path)
+    if(path is not None):
+        agent.load(path)
 
+    # agent.shutdown_explore()
+
+    agent.exploring_rate = 1
+    
+    n = 10
+    for episode in range(n):
+    
+        observation, info = env.reset()  
+        env.render()
+        while(1): 
+
+            player = observation[0]
+            if(player == 1): 
+                action = input("enter action: ")                
+                action = agent.decodeAction(int(action))
+            else:
+                action = agent.select_action(observation) 
+            
+            observation_next, reward, terminated, _, info = env.step(action) 
+            env.render()
+
+            if terminated:   
+                winner = info['winner']  
+                print(f'winner: {winner}')
+                break
+
+            observation = observation_next
+     
+
+evaluate()
