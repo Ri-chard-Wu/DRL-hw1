@@ -24,7 +24,7 @@ class TicTacToe:
                              [0, 0, 0],
                              [0, 0, 0]])
         self.player = np.random.choice([1, -1], 1, p=[0.5, 0.5])[0]
-        print(f"[reset] player: {self.player}")
+        # print(f"[reset] player: {self.player}")
 
         observation = np.hstack(([self.player], self.map.flatten()))
         info = {'winner': 0}
@@ -119,6 +119,8 @@ class Agent:
         self.nS = nS
         self.q_table = torch.zeros([self.nS, self.nA], dtype=torch.float32)
 
+        
+
         self._encodeAction = {
             (0, 0): 0,
             (1, 0): 1,
@@ -150,7 +152,7 @@ class Agent:
             num += (e+1) * 3**i
 
         num += int((st[0]+1)/2) * 3**9
- 
+        return num
 
     def encodeAction(self, a): 
         return self._encodeAction[(a[0], a[1])]
@@ -173,8 +175,22 @@ class Agent:
 
         if np.random.rand() < self.exploring_rate: 
             action = np.random.choice(np.arange(self.nA)[actionMask])  
-        else:                   
+        else:       
+            # print(f'a self.q_table.shape: {self.q_table.shape}')   
+            # print(f'actionMask: {actionMask}')       
+            # print(f'self.q_table[stateId]: {stateId}') 
+
+            idxMap = {}
+            idx = 0
+            for i, a in enumerate(actionMask):
+                if(a): 
+                    idxMap[idx] = i
+                    idx += 1
+
             action = torch.argmax(self.q_table[stateId, actionMask]).item()
+            action = idxMap[action]
+        
+
         return self.decodeAction(action)
 
      
@@ -200,6 +216,7 @@ class Agent:
         self.exploring_rate = 0
 
     def load(self, path):
+        print(f'loaded agent: {path}')
         self.q_table = torch.load(path)
 
 
@@ -214,8 +231,8 @@ def train(load_path=None, save_path=None):
 
 
     agent = Agent(nA, nS)
-    if(load_path is not None):
-        agent.load(load_path)
+    # if(load_path is not None):
+    #     agent.load(load_path)
     
     
     reward_per_epoch = []
@@ -226,15 +243,14 @@ def train(load_path=None, save_path=None):
     print_every_episode = 1
     save_every_episode = 500
     show_gif_every_episode = 5000
-    NUM_EPISODE = 10000
+    NUM_EPISODE = 500000
 
     for episode in range(NUM_EPISODE):
     
         observation, info = env.reset() 
 
         # if episode % print_every_episode == 0:
-        #     agent.shutdown_explore()
-    
+        #     agent.shutdown_explore()    
         
         trajectory = {1:[], -1:[]}
         
@@ -310,9 +326,9 @@ def evaluate(path=None):
     if(path is not None):
         agent.load(path)
 
-    # agent.shutdown_explore()
+    agent.shutdown_explore()
 
-    agent.exploring_rate = 1
+    # agent.exploring_rate = 1
     
     n = 10
     for episode in range(n):
@@ -339,4 +355,4 @@ def evaluate(path=None):
             observation = observation_next
      
 
-evaluate()
+evaluate(path='111022533_hw1_3_data')

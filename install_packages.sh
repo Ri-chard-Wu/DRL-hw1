@@ -1,5 +1,5 @@
-pip install gymnasium
-conda install swig
+pip install -y gymnasium
+conda install -y swig
 apt update
 apt install -y build-essential
-pip install gymnasium[box2d]
+pip install -y gymnasium[box2d]
