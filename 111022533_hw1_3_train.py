@@ -1,4 +1,4 @@
-import gymnasium as gym
+# import gymnasium as gym
 import numpy as np
 import torch
 
@@ -196,16 +196,22 @@ class Agent:
      
     def update_policy_MC(self, totalReturn, trajectory):
 
+        deltas = []
         target = totalReturn
         for s, a in reversed(trajectory):
 
             sId = self.encodeState(s)
             aId = self.encodeAction(a)
             
+            delta = abs(target - self.q_table[sId][aId])
+            deltas.append(delta)
+
             self.q_table[sId][aId] += self.learning_rate * (target - self.q_table[sId][aId])
 
             target = self.discount_factor * target
- 
+        
+        return np.mean(deltas)
+
     def update_parameters(self, episode):
         self.exploring_rate = \
                 max(MIN_EXPLORING_RATE, min(MAX_EXPLORING_RATE, 0.99**((episode) / 30)))
@@ -239,11 +245,12 @@ def train(load_path=None, save_path=None):
     lifetime_per_epoch = []
     exploring_rates = []
     learning_rates = []
+    deltas = []
 
     print_every_episode = 1
     save_every_episode = 500
     show_gif_every_episode = 5000
-    NUM_EPISODE = 500000
+    NUM_EPISODE = 20000
 
     for episode in range(NUM_EPISODE):
     
@@ -272,8 +279,13 @@ def train(load_path=None, save_path=None):
                     reward[winner] = 10
                     reward[-winner] = -10
 
-                agent.update_policy_MC(reward[1], trajectory[1])
-                agent.update_policy_MC(reward[-1], trajectory[-1])
+
+                delta1 = agent.update_policy_MC(reward[1], trajectory[1])
+                delta2 = agent.update_policy_MC(reward[-1], trajectory[-1])
+                 
+                if episode % 100 == 0:
+                    # print(f'eps: {episode}, delta1: {delta1}') 
+                    deltas.append(delta1)
 
                 break
 
@@ -282,40 +294,20 @@ def train(load_path=None, save_path=None):
     
         agent.update_parameters(episode)
 
-        # if episode % print_every_episode == 0:
         if episode % save_every_episode == 0:
-            print(f'eps{episode} saved model')
-            torch.save(agent.q_table, save_path)
+            if(save_path is not None):
+                print(f'eps{episode} saved model')
+                torch.save(agent.q_table, save_path)
 
-
-
-        #     print("eps: {}, len: {}, cumu reward: {}, exploring rate: {}, learning rate: {}".format(
-        #         episode,
-        #         t,
-        #         cum_reward,
-        #         agent.exploring_rate,
-        #         agent.learning_rate
-        #     ))
-
-        #     reward_per_epoch.append(cum_reward)
-        #     exploring_rates.append(agent.exploring_rate)
-        #     learning_rates.append(agent.learning_rate)
-        #     lifetime_per_epoch.append(t)
-
-        #  if episode == NUM_EPISODE-1: 
-        #     renderer.render_all(s_a_pairs)
-
-    # print(f'reward_per_epoch (qlearning): {reward_per_epoch}')
-
-    if(save_path is not None):
-        print('saved model')
-        torch.save(agent.q_table, save_path)
+    # if(save_path is not None):
+    #     print('saved model')
+    #     torch.save(agent.q_table, save_path)
       
 
-
+    print(f'deltas: {deltas}')
 
 # train(save_path='111022533_hw1_3_data')
-# train()
+train()
 
 
 
@@ -355,4 +347,4 @@ def evaluate(path=None):
             observation = observation_next
      
 
-evaluate(path='111022533_hw1_3_data')
+# evaluate(path='111022533_hw1_3_data')
