@@ -57,10 +57,10 @@ class PrioritizeExperienceReplayBuffer():
 
         probs = list(np.array(self.priorities) / sum(self.priorities))
          
-        this.ids = sorted(range(len(probs)), key=lambda i: probs[i])[-n:]
+        self.ids = sorted(range(len(probs)), key=lambda i: probs[i])[-n:]
         
 
-        return [self.buf[i] for i in this.ids]
+        return [self.buf[i] for i in self.ids]
  
 
     def updatePriorities(self, tdLosses):
@@ -68,7 +68,7 @@ class PrioritizeExperienceReplayBuffer():
         if(not self.pendingUpdate): return
 
         for i, tdLoss in enumerate(tdLosses):
-            idx = this.ids[i]
+            idx = self.ids[i]
             self.priorities[idx] = tdLoss
         
         self.pendingUpdate = False
@@ -177,7 +177,7 @@ class NNetWrapper():
         self.args = dotdict({
             'lr': 0.001,
             'dropout': 0.3,
-            'epochs': 200,
+            'epochs': 1000,
             'batch_size': 64,
             'cuda': False,
             'num_channels': 256,
@@ -188,44 +188,16 @@ class NNetWrapper():
         self.board_z, self.board_x, self.board_y = game.getBoardSize()
         self.action_size = game.getActionSize()
 
-    # def train(self, examples):   
-
-    #     input_boards, target_pis, target_vs = list(zip(*examples))
-
-    #     b = tf.convert_to_tensor(input_boards, dtype=tf.float32)
-    #     pis = tf.convert_to_tensor(target_pis, dtype=tf.float32)
-    #     vs = tf.convert_to_tensor(target_vs, dtype=tf.float32)
-        
-    #     batch_size = self.args.batch_size
-
-    #     avg_train_losses = []
-    #     for epoch in range(self.args.epochs):
-        
-    #         train_losses = [] 
-    #         offset = 0 
-    #         while(offset < len(examples)):  
-    #             batch = (b[offset:offset+batch_size, ...],
-    #                      pis[offset:offset+batch_size, ...],
-    #                      vs[offset:offset+batch_size, ...])
-
-    #             total_loss, td_loss = self.model.train_step(batch)
-    #             train_losses.append(np.mean(total_loss.numpy()))
-    #             offset += batch_size
-
-    #         avg_train_loss = np.mean(train_losses)
-    #         avg_train_losses.append(avg_train_loss)
-    #         print(f"Epoch: {epoch}, avg_train_loss: {avg_train_loss}")
-
-
+  
 
     def train(self, perBuf):   
         
         batch_size = self.args.batch_size
  
         train_losses = []
-        for epoch in range(self.args.epochs):
-            
+        for epoch in range(self.args.epochs): 
             examples = perBuf.getTopPriorityExamples(batch_size)
+            shuffle(examples)
 
             b, pis, vs = list(zip(*examples))
 
@@ -234,11 +206,11 @@ class NNetWrapper():
             vs = tf.convert_to_tensor(vs, dtype=tf.float32)
  
             total_loss, td_losses = self.model.train_step((b, pis, vs))
-            train_losses.append(np.mean(total_loss.numpy()))
-             
+            train_losses.append(np.mean(total_loss.numpy()))             
             perBuf.updatePriorities(td_losses.numpy())
        
-        print(f"avg_train_loss: {np.mean(train_losses)}")
+        # print(f"avg_train_loss: {np.mean(train_losses)}")
+        return np.mean(train_losses)
 
 
 
@@ -809,7 +781,6 @@ class Coach():
                 pi = np.zeros(len(pi))    
                 pi[idx] = 1.0
 
-
  
                 
             trainExamples[self.curPlayer].append([canonicalBoard, pi, v[0]])
@@ -834,69 +805,38 @@ class Coach():
                         pi = x[1]
                         v_pred = x[2]
 
-                        priority = (v_pred - target)**2
-                        print(f'#### priority: {priority}')
+                        priority = (v_pred - target)**2 
                  
                         # data augmentation
                         sym = self.game.getSymmetries(canonicalBoard, pi)
-                        for b, p in sym:
-
+                        for b, p in sym: 
                             examples.append((b, p, target)) 
-                            priorities.append(priority)
-
-                            # self.perBuf.addExample(priority, (b, p, target))
+                            priorities.append(priority) 
                        
                         target = gamma * target
-
-                self.perBuf.addExamples(priorities, examples)
-                # return examples, priorities
+                return examples, priorities
               
 
     def learn(self): 
 
-        for i in range(1, self.args.numIters + 1):
-            # print(f'#### iter: {i} ####')
+        for i in range(1, self.args.numIters + 1): 
 
-            # iterationTrainExamples = deque([], maxlen=self.args.maxlenOfQueue)
             examples, priorities = [], []
 
             for j in range(self.args.numEps):
-                print(f'#### iter: {i}, eps: {j} ####')
-                # self.mcts = MCTS(self.game, self.nnet, self.args)  # reset search tree
-                
-                # e, p = self.executeEpisode()
-                # examples += e
-                # priorities += p
-                self.executeEpisode()
+                # print(f'#### iter: {i}, eps: {j} ####') 
+                e, p = self.executeEpisode()
+                examples += e
+                priorities += p 
 
-            # self.trainExamplesHistory.append(examples)
+            self.perBuf.addExamples(priorities, examples)
+         
+            loss = self.nnet.train(self.perBuf)
 
+            print(f'#### iter: {i}, loss: {loss} ####') 
 
-            # if len(self.trainExamplesHistory) > self.args.numItersForTrainExamplesHistory:                
-            #     self.trainExamplesHistory.pop(0)
-          
-            # self.saveTrainExamples(i - 1)
- 
-            # trainExamples = []
-            # for e in self.trainExamplesHistory:
-            #     trainExamples.extend(e)
-
-
-            # shuffle(trainExamples)
- 
             if (i % 5 == 0):
                 self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=f'iter2-{i}.pth.tar')
-        
-            # trainExamples = self.getTopPriorityExamples(examples, priorities, 0.5)
-            # print(f'len(trainExamples): {len(trainExamples)}, len(examples): {len(examples)}')
-            # shuffle(examples)
-
-
-            trainExamples = self.perBuf.getTopPriorityExamples()
-            shuffle(trainExamples)
-            self.nnet.train(trainExamples)
-         
-
 
          
 
@@ -921,7 +861,7 @@ def train():
 
     args = dotdict({
         'numIters': 100000,
-        'numEps': 10,                # Number of complete self-play games to simulate during a new iteration.
+        'numEps': 20,                # Number of complete self-play games to simulate during a new iteration.
         'tempThreshold': 15,        #
         'updateThreshold': 0.6,     # During arena playoff, new neural net will be accepted if threshold or more of games are won.
         'maxlenOfQueue': 200000,    # Number of game examples to train the neural networks.
