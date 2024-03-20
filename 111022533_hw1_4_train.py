@@ -52,6 +52,9 @@ class TicTacToeNNet():
             BatchNormalization(axis=3)(
                 Conv3D(args.num_channels, 3, padding='valid')(h_conv3)))        # batch_size  x (board_x-2) x (board_y-2) x num_channels
         
+
+
+
         h_conv4_flat = Flatten()(h_conv4)       
 
         s_fc1 = Dropout(args.dropout)(
@@ -85,6 +88,99 @@ class TicTacToeNNet():
                                         optimizer=Adam(args.lr))
  
 
+
+
+class TicTacToeNNetV2(tf.keras.Model):
+
+    def __init__(self, game, args):
+  
+        super(TicTacToeNNetV2, self).__init__()
+
+        self.optimizer = tf.keras.optimizers.Adam(args.lr)
+
+        self.action_size = game.getActionSize()
+        self.args = args
+
+        self.act = {}
+        self.bn = {}
+        self.conv = {}
+        padding = ['same', 'same', 'same', 'valid']
+
+        for i in range(4):
+            self.act[i] = tf.keras.layers.Activation('relu')
+            self.bn[i] = tf.keras.layers.BatchNormalization(axis=3)
+            self.conv[i] = tf.keras.layers.Conv3D(args.num_channels, 3, padding=padding[i])
+
+ 
+        self.flatten = tf.keras.layers.Flatten()
+ 
+        self.dropout1 = tf.keras.layers.Dropout(args.dropout)
+        self.act1 = tf.keras.layers.Activation('relu')
+        self.bn1 = tf.keras.layers.BatchNormalization(axis=1)
+        self.fc1 = tf.keras.layers.Dense(1024)  
+
+        self.dropout2 = tf.keras.layers.Dropout(args.dropout)
+        self.act2 = tf.keras.layers.Activation('relu')
+        self.bn2 = tf.keras.layers.BatchNormalization(axis=1)
+        self.fc2 = tf.keras.layers.Dense(512)  
+
+ 
+        self.fc_a = tf.keras.layers.Dense(self.action_size, activation='softmax', name='pi') 
+
+        self.fc_v = tf.keras.layers.Dense(1, activation='tanh', name='v') 
+        
+   
+    @tf.function
+    def predict(self, x):
+        
+        x = tf.expand_dims(x, axis=4)
+ 
+        for i in range(4):
+            x = self.conv[i](x)
+            x = self.bn[i](x)
+            x = self.act[i](x)
+
+        x = self.flatten(x)
+
+        x = self.fc1(x)
+        x = self.bn1(x)
+        x = self.act1(x)
+        x = self.dropout1(x)
+
+        x = self.fc2(x)
+        x = self.bn2(x)
+        x = self.act2(x)
+        x = self.dropout2(x)
+
+        prob_a = self.fc_a(x)
+        v = self.fc_v(x)
+
+        return prob_a, v
+    
+    @tf.function
+    def train_step(self, data): 
+
+        # x: [bz, 4, 4, 4], a_prob: [bz, 65], v: [bz,]        
+        x, a_prob, v = data # batch data
+
+        with tf.GradientTape() as tape:
+            
+            a_prob_pred, v_pred = self.predict(x)
+
+
+            loss1 = tf.keras.losses.categorical_crossentropy(a_prob, a_prob_pred)
+            loss2 = tf.keras.metrics.mean_squared_error(v, v_pred)
+            loss = loss1 + loss2
+
+            gradients = tape.gradient(loss, self.trainable_variables) 
+            self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+
+        return loss
+            
+
+
+
+
 class NNetWrapper():
     def __init__(self, game):
 
@@ -108,70 +204,100 @@ class NNetWrapper():
             'num_channels': 256,
         })
 
-        self.nnet = TicTacToeNNet(game, self.args)
+        # self.nnet = TicTacToeNNet(game, self.args)
+        self.nnet = TicTacToeNNetV2(game, self.args)
+
         self.board_z, self.board_x, self.board_y = game.getBoardSize()
         self.action_size = game.getActionSize()
 
-    def train(self, examples): 
-        """
-        examples: list of examples, each example is of form (board, pi, v), # board is canonicalBoard?
-        """
+    def train(self, examples):  
+
+        # input_boards, target_pis, target_vs = list(zip(*examples))
+
+        # # b = tf.convert_to_tensor(input_boards, dtype=tf.float32)
+        # # pis = tf.convert_to_tensor(target_pis, dtype=tf.float32)
+        # # vs = tf.convert_to_tensor(target_vs, dtype=tf.float32)
+        # # print(f'######## b[].shape: {b[200:10000, ...].shape}, pis.shape: {pis.shape}, vs.shape: {vs[200:10000, ...].shape} ###########')
+
+        # input_boards = np.asarray(input_boards)
+        # target_pis = np.asarray(target_pis)
+        # target_vs = np.asarray(target_vs)
         
+
+        # self.nnet.model.fit(
+        #     x = input_boards, y = [target_pis, target_vs],
+        #     batch_size = self.args.batch_size,
+        #     epochs = self.args.epochs)
+ 
 
         input_boards, target_pis, target_vs = list(zip(*examples))
 
-        input_boards = np.asarray(input_boards)
-        target_pis = np.asarray(target_pis)
-        target_vs = np.asarray(target_vs)
+        b = tf.convert_to_tensor(input_boards, dtype=tf.float32)
+        pis = tf.convert_to_tensor(target_pis, dtype=tf.float32)
+        vs = tf.convert_to_tensor(target_vs, dtype=tf.float32)
+        
+        batch_size = self.args.batch_size
 
-        # print('######### fitting ... #############')
-        self.nnet.model.fit(
-            x = input_boards, y = [target_pis, target_vs],
-            batch_size = self.args.batch_size,
-            epochs = self.args.epochs)
+        avg_train_losses = []
+        for epoch in range(self.args.epochs):
+        
+            train_losses = [] 
+            offset = 0 
+            while(offset < len(examples)):  
+                batch = (b[offset:offset+batch_size, ...],
+                         pis[offset:offset+batch_size, ...],
+                         vs[offset:offset+batch_size, ...])
 
-        # print('######### done fitting ... #############')
+                loss = self.nnet.train_step(batch)
+                train_losses.append(np.mean(loss.numpy()))
+                offset += batch_size
+
+            avg_train_loss = np.mean(train_losses)
+            avg_train_losses.append(avg_train_loss)
+            print(f"Epoch: {epoch}, avg_train_loss: {avg_train_loss}")
+
+           
 
     def predict(self, board):
-        """
-        board: np array with board
-        """
-        # timing
-        start = time.time()
+        # start = time.time()
+        # board = board[np.newaxis, :, :]
+        # pi, v = self.nnet.model.predict(board, verbose=False) 
+        # K.clear_session()
+        # tf.keras.backend.clear_session() 
+        # return pi[0], v[0]
 
-        # preparing input
-        board = board[np.newaxis, :, :]
-
-        # run
-        pi, v = self.nnet.model.predict(board, verbose=False)
+        board = board[np.newaxis, :, :] 
+        board = tf.convert_to_tensor(board, dtype=tf.float32)
+         
+        pi, v = self.nnet.predict(board) 
+         
         K.clear_session()
-        tf.keras.backend.clear_session()
+        tf.keras.backend.clear_session() 
+        return pi[0].numpy(), v[0].numpy()
 
-        # print(f'type(pi): {type(pi)}')
-        #print('PREDICTION TIME TAKEN : {0:03f}'.format(time.time()-start))
-        return pi[0], v[0]
+ 
 
     def save_checkpoint(self, folder='checkpoint', filename='checkpoint.pth.tar'):
-        # change extension
+        
         filename = filename.split(".")[0] + ".h5"
         
-        filepath = os.path.join(folder, filename)
-        if not os.path.exists(folder):
-            print("Checkpoint Directory does not exist! Making directory {}".format(folder))
-            os.mkdir(folder)
-        else:
-            print("Checkpoint Directory exists! ")
-        self.nnet.model.save_weights(filepath)
+        # filepath = os.path.join(folder, filename)
+        # if not os.path.exists(folder):
+        #     print("Checkpoint Directory does not exist! Making directory {}".format(folder))
+        #     os.mkdir(folder)
+        # else:
+        #     print("Checkpoint Directory exists! ")
+        # self.nnet.model.save_weights(filepath)
+
 
     def load_checkpoint(self, folder='checkpoint', filename='checkpoint.pth.tar'):
-        # change extension
+        
         filename = filename.split(".")[0] + ".h5"
         
-        # https://github.com/pytorch/examples/blob/master/imagenet/main.py#L98
-        filepath = os.path.join(folder, filename)
-        if not os.path.exists(filepath):
-            raise("No model in path '{}'".format(filepath))
-        self.nnet.model.load_weights(filepath)
+        # filepath = os.path.join(folder, filename)
+        # if not os.path.exists(filepath):
+        #     raise("No model in path '{}'".format(filepath))
+        # self.nnet.model.load_weights(filepath)
 
 
 
@@ -776,7 +902,7 @@ class Coach():
 
             shuffle(trainExamples)
  
-            if (i % 10 == 0):
+            if (i % 5 == 0):
                 self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=f'iter3-{i}.pth.tar')
         
             # trainExamples = self.getTopPriorityExamples(examples, priorities, 0.5)
@@ -863,7 +989,7 @@ def train():
 
     args = dotdict({
         'numIters': 100000,
-        'numEps': 25,                # Number of complete self-play games to simulate during a new iteration.
+        'numEps': 1,                # Number of complete self-play games to simulate during a new iteration.
         'tempThreshold': 15,        #
         'updateThreshold': 0.6,     # During arena playoff, new neural net will be accepted if threshold or more of games are won.
         'maxlenOfQueue': 200000,    # Number of game examples to train the neural networks.
