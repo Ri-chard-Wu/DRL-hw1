@@ -15,7 +15,8 @@ import tensorflow as tf
 
 EPS = 1e-8
 
-
+numEps = 20
+epoches = 1000
 
 
 class dotdict(dict):
@@ -31,6 +32,7 @@ class PrioritizeExperienceReplayBuffer():
         self.batch = 64
         self.maxLength = 2**12 
         self.pendingUpdate = False
+        self.beta = 1.0
     
     def addExamples(self, priorities, examples):
         
@@ -57,10 +59,15 @@ class PrioritizeExperienceReplayBuffer():
 
         probs = list(np.array(self.priorities) / sum(self.priorities))
          
-        self.ids = sorted(range(len(probs)), key=lambda i: probs[i])[-n:]
+        # self.ids = sorted(range(len(probs)), key=lambda i: probs[i])[-n:]        
+        self.ids = np.random.choice(len(probs), n, p=probs, replace=False)
         
+        probs_top = tf.clip_by_value([probs[i] for i in self.ids], 0.000001, 1.0)
 
-        return [self.buf[i] for i in self.ids]
+        learning_weights = (1/(probs_top * len(probs)))**self.beta
+        learning_weights = tf.cast(learning_weights, tf.float32)
+
+        return [self.buf[i] for i in self.ids], learning_weights
  
 
     def updatePriorities(self, tdLosses):
@@ -147,7 +154,7 @@ class TicTacToeNNet(tf.keras.Model):
  
 
     @tf.function
-    def train_step(self, data): 
+    def train_step(self, data, learning_weights): 
 
         # x: [bz, 4, 4, 4], a_prob: [bz, 65], v: [bz,]        
         x, a_prob, v = data 
@@ -159,7 +166,7 @@ class TicTacToeNNet(tf.keras.Model):
 
             a_loss = tf.keras.losses.categorical_crossentropy(a_prob, a_prob_pred)
             td_loss = tf.keras.metrics.mean_squared_error(v, v_pred)
-            total_loss = a_loss + td_loss
+            total_loss = (a_loss + td_loss) * learning_weights
 
             gradients = tape.gradient(total_loss, self.trainable_variables) 
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
@@ -177,7 +184,7 @@ class NNetWrapper():
         self.args = dotdict({
             'lr': 0.001,
             'dropout': 0.3,
-            'epochs': 1000,
+            'epochs': epoches,
             'batch_size': 64,
             'cuda': False,
             'num_channels': 256,
@@ -196,16 +203,15 @@ class NNetWrapper():
  
         train_losses = []
         for epoch in range(self.args.epochs): 
-            examples = perBuf.getTopPriorityExamples(batch_size)
-            shuffle(examples)
-
+            examples, learning_weights = perBuf.getTopPriorityExamples(batch_size)
+            
             b, pis, vs = list(zip(*examples))
 
             b = tf.convert_to_tensor(b, dtype=tf.float32)
             pis = tf.convert_to_tensor(pis, dtype=tf.float32)
             vs = tf.convert_to_tensor(vs, dtype=tf.float32)
  
-            total_loss, td_losses = self.model.train_step((b, pis, vs))
+            total_loss, td_losses = self.model.train_step((b, pis, vs), learning_weights)
             train_losses.append(np.mean(total_loss.numpy()))             
             perBuf.updatePriorities(td_losses.numpy())
        
@@ -835,8 +841,8 @@ class Coach():
 
             print(f'#### iter: {i}, loss: {loss} ####') 
 
-            if (i % 5 == 0):
-                self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=f'iter2-{i}.pth.tar')
+            if (i % 10 == 0):
+                self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=f'iter4-{i}.pth.tar')
 
          
 
@@ -857,11 +863,11 @@ def train():
     nnet = NNetWrapper(game)
     
 
-    nnet.load_checkpoint('temp', 'iter1-12.h5')
+    nnet.load_checkpoint('temp', 'iter3-10.h5')
 
     args = dotdict({
         'numIters': 100000,
-        'numEps': 20,                # Number of complete self-play games to simulate during a new iteration.
+        'numEps': numEps,                # Number of complete self-play games to simulate during a new iteration.
         'tempThreshold': 15,        #
         'updateThreshold': 0.6,     # During arena playoff, new neural net will be accepted if threshold or more of games are won.
         'maxlenOfQueue': 200000,    # Number of game examples to train the neural networks.
