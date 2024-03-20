@@ -60,7 +60,7 @@ class PrioritizeExperienceReplayBuffer():
         probs = list(np.array(self.priorities) / sum(self.priorities))
          
         # self.ids = sorted(range(len(probs)), key=lambda i: probs[i])[-n:]        
-        self.ids = np.random.choice(len(probs), n, p=probs, replace=False)
+        self.ids = np.random.choice(len(probs), n, p=probs)
         
         probs_top = tf.clip_by_value([probs[i] for i in self.ids], 0.000001, 1.0)
 
@@ -775,14 +775,15 @@ class Coach():
             pi, v = self.nnet.predict(canonicalBoard)
             valids = self.game.getValidMoves(canonicalBoard, 1) 
             pi = pi * valids
-            if episodeStep < self.args.tempThreshold: # prob
-                sum_Ps_s = np.sum(pi)
-                if sum_Ps_s > 0:
-                    pi /= sum_Ps_s   
-                else: 
-                    pi = pi + valids
-                    pi /= np.sum(pi)                
-            else: # determ
+
+            sum_Ps_s = np.sum(pi)
+            if sum_Ps_s > 0:
+                pi /= sum_Ps_s   
+            else: 
+                pi = pi + valids
+                pi /= np.sum(pi) 
+                 
+            if episodeStep > self.args.tempThreshold: # deterministic
                 idx = np.argmax(pi)
                 pi = np.zeros(len(pi))    
                 pi[idx] = 1.0
@@ -842,7 +843,7 @@ class Coach():
             print(f'#### iter: {i}, loss: {loss} ####') 
 
             if (i % 10 == 0):
-                self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=f'iter4-{i}.pth.tar')
+                self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=f'iter5-{i}.pth.tar')
 
          
 
@@ -863,7 +864,7 @@ def train():
     nnet = NNetWrapper(game)
     
 
-    nnet.load_checkpoint('temp', 'iter3-10.h5')
+    nnet.load_checkpoint('backup', 'iter4-90.h5')
 
     args = dotdict({
         'numIters': 100000,
