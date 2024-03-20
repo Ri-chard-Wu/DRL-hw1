@@ -102,7 +102,7 @@ class NNetWrapper():
         self.args = dotdict({
             'lr': 0.001,
             'dropout': 0.3,
-            'epochs': 10,
+            'epochs': 25,
             'batch_size': 64,
             'cuda': False,
             'num_channels': 256,
@@ -124,13 +124,13 @@ class NNetWrapper():
         target_pis = np.asarray(target_pis)
         target_vs = np.asarray(target_vs)
 
-        print('######### fitting ... #############')
+        # print('######### fitting ... #############')
         self.nnet.model.fit(
             x = input_boards, y = [target_pis, target_vs],
             batch_size = self.args.batch_size,
             epochs = self.args.epochs)
 
-        print('######### done fitting ... #############')
+        # print('######### done fitting ... #############')
 
     def predict(self, board):
         """
@@ -674,62 +674,101 @@ class Coach():
 
     def executeEpisode(self): 
 
-        trainExamples = []
+        trainExamples = {1: [], -1: []}
         board = self.game.getInitBoard() # an np array of shape 4x4x4
         self.curPlayer = 1
-        episodeStep = 0
+        episodeStep = 0 
 
         while True:
+
             episodeStep += 1
             
             canonicalBoard = self.game.getCanonicalForm(board, self.curPlayer)
 
             temp = int(episodeStep < self.args.tempThreshold)
+            # pi = self.mcts.getActionProb(canonicalBoard, temp=temp)
+            # v = [0]
 
-            pi = self.mcts.getActionProb(canonicalBoard, temp=temp)
+            pi, v = self.nnet.predict(canonicalBoard)
+            valids = self.game.getValidMoves(canonicalBoard, 1) 
+            pi = pi * valids
+            if episodeStep < self.args.tempThreshold: # prob
+                sum_Ps_s = np.sum(pi)
+                if sum_Ps_s > 0:
+                    pi /= sum_Ps_s   
+                else: 
+                    pi = pi + valids
+                    pi /= np.sum(pi)                
+            else: # determ
+                idx = np.argmax(pi)
+                pi = np.zeros(len(pi))    
+                pi[idx] = 1.0
 
-            # data augmentation
-            sym = self.game.getSymmetries(canonicalBoard, pi)
-            for b, p in sym:
-                trainExamples.append([b, self.curPlayer, p, None])
+
+ 
+                
+            trainExamples[self.curPlayer].append([canonicalBoard, pi, v[0]])
 
             action = np.random.choice(len(pi), p=pi)
             board, self.curPlayer = self.game.getNextState(board, self.curPlayer, action)
 
             r = self.game.getGameEnded(board, self.curPlayer)
 
-            if r != 0:
-                # (canonicalBoard, pi, v)
-                print(f'len(trainExamples): {len(trainExamples)}')
-                return [(x[0], x[2], r * ((-1) ** (x[1] != self.curPlayer))) for x in trainExamples]
+            
+            if r != 0:  
+                examples = []
+                priorities = []
+                for player in trainExamples:
+                    
+                    gamma = 0.9
+                    target = r * ((-1) ** (player != self.curPlayer))
 
+                    for x in reversed(trainExamples[player]):
+                        
+                        canonicalBoard = x[0]
+                        pi = x[1]
+                        v_pred = x[2]
 
+                        priority = abs(v_pred - target)
+
+                        # examples.append((x[0], x[1], target))
+                         
+                        # data augmentation
+                        sym = self.game.getSymmetries(canonicalBoard, pi)
+                        for b, p in sym:
+                            examples.append((b, p, target)) 
+                            priorities.append(priority)
+                        # self.iterationTrainExamples[priority] = (x[0], x[1], target)
+
+                        target = gamma * target
+                
+                return examples, priorities
+                # return [(x[0], x[2], r * ((-1) ** (x[1] != self.curPlayer))) for x in trainExamples]
+ 
 
     def learn(self): 
 
         for i in range(1, self.args.numIters + 1):
             # print(f'#### iter: {i} ####')
 
-            iterationTrainExamples = deque([], maxlen=self.args.maxlenOfQueue)
+            # iterationTrainExamples = deque([], maxlen=self.args.maxlenOfQueue)
+            examples, priorities = [], []
 
             for j in range(self.args.numEps):
                 print(f'#### iter: {i}, eps: {j} ####')
-                self.mcts = MCTS(self.game, self.nnet, self.args)  # reset search tree
-                iterationTrainExamples += self.executeEpisode()
-                # self.executeEpisode()
+                # self.mcts = MCTS(self.game, self.nnet, self.args)  # reset search tree
+                e, p = self.executeEpisode()
+                examples += e
+                priorities += p
 
-            # save the iteration examples to the history 
-            # print(f'len(iterationTrainExamples)')
-            self.trainExamplesHistory.append(iterationTrainExamples)
+            self.trainExamplesHistory.append(examples)
 
 
             if len(self.trainExamplesHistory) > self.args.numItersForTrainExamplesHistory:                
                 self.trainExamplesHistory.pop(0)
           
             # self.saveTrainExamples(i - 1)
-
-            # print(f'len(iterationTrainExamples): {len(iterationTrainExamples)}, len(self.trainExamplesHistory): {len(self.trainExamplesHistory)}')
-
+ 
             trainExamples = []
             for e in self.trainExamplesHistory:
                 trainExamples.extend(e)
@@ -737,13 +776,39 @@ class Coach():
 
             shuffle(trainExamples)
  
-            if (i % 5 == 0):
+            if (i % 10 == 0):
                 self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=f'iter3-{i}.pth.tar')
         
+            # trainExamples = self.getTopPriorityExamples(examples, priorities, 0.5)
+            # print(f'len(trainExamples): {len(trainExamples)}, len(examples): {len(examples)}')
+            # shuffle(examples)
             self.nnet.train(trainExamples)
          
 
- 
+    def getTopPriorityExamples(self, examples, priorities, thre):
+        # print(f'########### priorities: {priorities}')
+        probs = list(np.array(priorities) / sum(priorities))
+        # sel = probs > thre
+        out = []
+        for i, prob in enumerate(probs):
+            print(i, prob)
+            if(prob > thre):
+                out.append(examples[i])
+        return out
+        # print(f'########### len(examples): {np.array(examples).shape}, len(sel): {len(sel)}')
+        # return np.array(examples)[sel]
+
+
+
+
+
+
+
+
+
+
+
+
     def getCheckpointFile(self, iteration):
         return 'checkpoint_' + str(iteration) + '.pth.tar'
 
@@ -794,11 +859,11 @@ def train():
     game = TicTacToeGame(4)
     nnet = NNetWrapper(game)
 
-    nnet.load_checkpoint('temp', 'iter2-12.h5')
+    # nnet.load_checkpoint('temp', 'iter3-50.h5')
 
     args = dotdict({
-        'numIters': 10000,
-        'numEps': 5,                # Number of complete self-play games to simulate during a new iteration.
+        'numIters': 100000,
+        'numEps': 25,                # Number of complete self-play games to simulate during a new iteration.
         'tempThreshold': 15,        #
         'updateThreshold': 0.6,     # During arena playoff, new neural net will be accepted if threshold or more of games are won.
         'maxlenOfQueue': 200000,    # Number of game examples to train the neural networks.
@@ -808,7 +873,7 @@ def train():
 
         'checkpoint': './temp/',
         'load_model': False, 
-        'numItersForTrainExamplesHistory': 2
+        'numItersForTrainExamplesHistory': 5
     })
 
 
