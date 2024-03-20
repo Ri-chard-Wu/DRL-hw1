@@ -22,79 +22,66 @@ class dotdict(dict):
     def __getattr__(self, name):
         return self[name]
 
-class TicTacToeNNet():
-    def __init__(self, game, args):
-        # game params
-        self.board_z, self.board_x, self.board_y = game.getBoardSize()
-        self.action_size = game.getActionSize()
-        self.args = args
 
-        # Neural Net
-        self.input_boards = Input(shape=(self.board_z, self.board_x, self.board_y))    # s: batch_size x board_x x board_y
+class PrioritizeExperienceReplayBuffer():
 
-        x_image = Reshape((self.board_z, self.board_x, self.board_y, 1))(self.input_boards)                # batch_size  x board_x x board_y x 1
+    def __init__(self):
+        self.buf = []
+        self.priorities = []
+        self.batch = 64
+        self.maxLength = 2**12 
+        self.pendingUpdate = False
+    
+    def addExamples(self, priorities, examples):
+        
+        if(self.pendingUpdate): return
+ 
+        excess = len(self.buf) + len(examples) - self.maxLength
+
+        if(excess > 0): 
+            tmp = []
+            tmp.extend(self.buf[excess:])
+            self.buf = tmp  
+
+            tmp = []
+            tmp.extend(self.priorities[excess:])
+            self.priorities = tmp
+        
+        self.buf.extend(examples)
+        self.priorities.extend(priorities)
+            
+
+    def getTopPriorityExamples(self, n):
+        
+        self.pendingUpdate = True
+
+        probs = list(np.array(self.priorities) / sum(self.priorities))
+         
+        this.ids = sorted(range(len(probs)), key=lambda i: probs[i])[-n:]
         
 
-        h_conv1 = Activation('relu')(
-            BatchNormalization(axis=3)(
-                # 3 * 3 * args.num_channels * 4
-                Conv3D(args.num_channels, 3, padding='same')(x_image)))         # batch_size  x board_x x board_y x num_channels
-        
-        h_conv2 = Activation('relu')(
-            BatchNormalization(axis=3)(
-                Conv3D(args.num_channels, 3, padding='same')(h_conv1)))         # batch_size  x board_x x board_y x num_channels
-        
-        h_conv3 = Activation('relu')(
-            BatchNormalization(axis=3)(
-                Conv3D(args.num_channels, 3, padding='same')(h_conv2)))        # batch_size  x (board_x) x (board_y) x num_channels
-        
-        h_conv4 = Activation('relu')(
-            BatchNormalization(axis=3)(
-                Conv3D(args.num_channels, 3, padding='valid')(h_conv3)))        # batch_size  x (board_x-2) x (board_y-2) x num_channels
-        
-
-
-
-        h_conv4_flat = Flatten()(h_conv4)       
-
-        s_fc1 = Dropout(args.dropout)(
-            Activation('relu')(
-                BatchNormalization(axis=1)(Dense(1024)(h_conv4_flat))))  # batch_size x 1024
-
-        s_fc2 = Dropout(args.dropout)(
-            Activation('relu')(
-                BatchNormalization(axis=1)(Dense(512)(s_fc1))))          # batch_size x 1024
-
-        # s_fc1 = Dropout(args.dropout)(
-        #     Activation('relu')(
-        #         BatchNormalization(axis=1)(Dense(512)(h_conv4_flat))))  # batch_size x 1024
-
-        # s_fc2 = Dropout(args.dropout)(
-        #     Activation('relu')(
-        #         BatchNormalization(axis=1)(Dense(256)(s_fc1))))          # batch_size x 1024
-
-
-        self.pi = Dense(self.action_size, activation='softmax', name='pi')(s_fc2)   # batch_size x self.action_size
-        
-        self.v = Dense(1, activation='tanh', name='v')(s_fc2)                    # batch_size x 1
-
-        self.model = Model(inputs=self.input_boards, outputs=[self.pi, self.v])
-
-        # loss is categorical_crossentropy + mean_squared_error
-
-
-        
-        self.model.compile(loss=['categorical_crossentropy','mean_squared_error'], 
-                                        optimizer=Adam(args.lr))
+        return [self.buf[i] for i in this.ids]
  
 
+    def updatePriorities(self, tdLosses):
+        
+        if(not self.pendingUpdate): return
+
+        for i, tdLoss in enumerate(tdLosses):
+            idx = this.ids[i]
+            self.priorities[idx] = tdLoss
+        
+        self.pendingUpdate = False
 
 
-class TicTacToeNNetV2(tf.keras.Model):
+
+
+
+class TicTacToeNNet(tf.keras.Model):
 
     def __init__(self, game, args):
   
-        super(TicTacToeNNetV2, self).__init__()
+        super(TicTacToeNNet, self).__init__()
 
         self.optimizer = tf.keras.optimizers.Adam(args.lr)
 
@@ -129,10 +116,11 @@ class TicTacToeNNetV2(tf.keras.Model):
 
         self.fc_v = tf.keras.layers.Dense(1, activation='tanh', name='v') 
         
-   
+    
+
     @tf.function
-    def predict(self, x):
-        
+    def call(self, x, training=None):
+ 
         x = tf.expand_dims(x, axis=4)
  
         for i in range(4):
@@ -156,26 +144,27 @@ class TicTacToeNNetV2(tf.keras.Model):
         v = self.fc_v(x)
 
         return prob_a, v
-    
+ 
+
     @tf.function
     def train_step(self, data): 
 
         # x: [bz, 4, 4, 4], a_prob: [bz, 65], v: [bz,]        
-        x, a_prob, v = data # batch data
+        x, a_prob, v = data 
 
         with tf.GradientTape() as tape:
             
-            a_prob_pred, v_pred = self.predict(x)
+            a_prob_pred, v_pred = self(x)
 
 
-            loss1 = tf.keras.losses.categorical_crossentropy(a_prob, a_prob_pred)
-            loss2 = tf.keras.metrics.mean_squared_error(v, v_pred)
-            loss = loss1 + loss2
+            a_loss = tf.keras.losses.categorical_crossentropy(a_prob, a_prob_pred)
+            td_loss = tf.keras.metrics.mean_squared_error(v, v_pred)
+            total_loss = a_loss + td_loss
 
-            gradients = tape.gradient(loss, self.trainable_variables) 
+            gradients = tape.gradient(total_loss, self.trainable_variables) 
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
-        return loss
+        return total_loss, td_loss
             
 
 
@@ -183,93 +172,82 @@ class TicTacToeNNetV2(tf.keras.Model):
 
 class NNetWrapper():
     def __init__(self, game):
-
-       
-
-        # args = dotdict({
-        #     'lr': 0.001,
-        #     'dropout': 0.3,
-        #     'epochs': 10,
-        #     'batch_size': 64,
-        #     'cuda': False,
-        #     'num_channels': 512,
-        # })
+ 
 
         self.args = dotdict({
             'lr': 0.001,
             'dropout': 0.3,
-            'epochs': 25,
+            'epochs': 200,
             'batch_size': 64,
             'cuda': False,
             'num_channels': 256,
-        })
+        }) 
 
-        # self.nnet = TicTacToeNNet(game, self.args)
-        self.nnet = TicTacToeNNetV2(game, self.args)
+        self.model = TicTacToeNNet(game, self.args)
 
         self.board_z, self.board_x, self.board_y = game.getBoardSize()
         self.action_size = game.getActionSize()
 
-    def train(self, examples):  
+    # def train(self, examples):   
 
-        # input_boards, target_pis, target_vs = list(zip(*examples))
+    #     input_boards, target_pis, target_vs = list(zip(*examples))
 
-        # # b = tf.convert_to_tensor(input_boards, dtype=tf.float32)
-        # # pis = tf.convert_to_tensor(target_pis, dtype=tf.float32)
-        # # vs = tf.convert_to_tensor(target_vs, dtype=tf.float32)
-        # # print(f'######## b[].shape: {b[200:10000, ...].shape}, pis.shape: {pis.shape}, vs.shape: {vs[200:10000, ...].shape} ###########')
-
-        # input_boards = np.asarray(input_boards)
-        # target_pis = np.asarray(target_pis)
-        # target_vs = np.asarray(target_vs)
+    #     b = tf.convert_to_tensor(input_boards, dtype=tf.float32)
+    #     pis = tf.convert_to_tensor(target_pis, dtype=tf.float32)
+    #     vs = tf.convert_to_tensor(target_vs, dtype=tf.float32)
         
+    #     batch_size = self.args.batch_size
 
-        # self.nnet.model.fit(
-        #     x = input_boards, y = [target_pis, target_vs],
-        #     batch_size = self.args.batch_size,
-        #     epochs = self.args.epochs)
- 
+    #     avg_train_losses = []
+    #     for epoch in range(self.args.epochs):
+        
+    #         train_losses = [] 
+    #         offset = 0 
+    #         while(offset < len(examples)):  
+    #             batch = (b[offset:offset+batch_size, ...],
+    #                      pis[offset:offset+batch_size, ...],
+    #                      vs[offset:offset+batch_size, ...])
 
-        input_boards, target_pis, target_vs = list(zip(*examples))
+    #             total_loss, td_loss = self.model.train_step(batch)
+    #             train_losses.append(np.mean(total_loss.numpy()))
+    #             offset += batch_size
 
-        b = tf.convert_to_tensor(input_boards, dtype=tf.float32)
-        pis = tf.convert_to_tensor(target_pis, dtype=tf.float32)
-        vs = tf.convert_to_tensor(target_vs, dtype=tf.float32)
+    #         avg_train_loss = np.mean(train_losses)
+    #         avg_train_losses.append(avg_train_loss)
+    #         print(f"Epoch: {epoch}, avg_train_loss: {avg_train_loss}")
+
+
+
+    def train(self, perBuf):   
         
         batch_size = self.args.batch_size
-
-        avg_train_losses = []
+ 
+        train_losses = []
         for epoch in range(self.args.epochs):
-        
-            train_losses = [] 
-            offset = 0 
-            while(offset < len(examples)):  
-                batch = (b[offset:offset+batch_size, ...],
-                         pis[offset:offset+batch_size, ...],
-                         vs[offset:offset+batch_size, ...])
+            
+            examples = perBuf.getTopPriorityExamples(batch_size)
 
-                loss = self.nnet.train_step(batch)
-                train_losses.append(np.mean(loss.numpy()))
-                offset += batch_size
+            b, pis, vs = list(zip(*examples))
 
-            avg_train_loss = np.mean(train_losses)
-            avg_train_losses.append(avg_train_loss)
-            print(f"Epoch: {epoch}, avg_train_loss: {avg_train_loss}")
+            b = tf.convert_to_tensor(b, dtype=tf.float32)
+            pis = tf.convert_to_tensor(pis, dtype=tf.float32)
+            vs = tf.convert_to_tensor(vs, dtype=tf.float32)
+ 
+            total_loss, td_losses = self.model.train_step((b, pis, vs))
+            train_losses.append(np.mean(total_loss.numpy()))
+             
+            perBuf.updatePriorities(td_losses.numpy())
+       
+        print(f"avg_train_loss: {np.mean(train_losses)}")
 
-           
 
-    def predict(self, board):
-        # start = time.time()
-        # board = board[np.newaxis, :, :]
-        # pi, v = self.nnet.model.predict(board, verbose=False) 
-        # K.clear_session()
-        # tf.keras.backend.clear_session() 
-        # return pi[0], v[0]
+
+    def predict(self, board): 
 
         board = board[np.newaxis, :, :] 
         board = tf.convert_to_tensor(board, dtype=tf.float32)
-         
-        pi, v = self.nnet.predict(board) 
+        # print(f'########## board.shape: {board.shape}')
+        pi, v = self.model(board) 
          
         K.clear_session()
         tf.keras.backend.clear_session() 
@@ -281,26 +259,26 @@ class NNetWrapper():
         
         filename = filename.split(".")[0] + ".h5"
         
-        # filepath = os.path.join(folder, filename)
-        # if not os.path.exists(folder):
-        #     print("Checkpoint Directory does not exist! Making directory {}".format(folder))
-        #     os.mkdir(folder)
-        # else:
-        #     print("Checkpoint Directory exists! ")
-        # self.nnet.model.save_weights(filepath)
+        filepath = os.path.join(folder, filename)
+        if not os.path.exists(folder):
+            print("Checkpoint Directory does not exist! Making directory {}".format(folder))
+            os.mkdir(folder)
+        else:
+            print("Checkpoint Directory exists! ")
+        self.model.save_weights(filepath)
 
 
     def load_checkpoint(self, folder='checkpoint', filename='checkpoint.pth.tar'):
         
         filename = filename.split(".")[0] + ".h5"
         
-        # filepath = os.path.join(folder, filename)
-        # if not os.path.exists(filepath):
-        #     raise("No model in path '{}'".format(filepath))
-        # self.nnet.model.load_weights(filepath)
+        filepath = os.path.join(folder, filename)
+        if not os.path.exists(filepath):
+            raise("No model in path '{}'".format(filepath))
 
-
-
+        # need call once to enable load weights.
+        self.model(tf.random.uniform(shape=[1,4,4,4]))
+        self.model.load_weights(filepath)
 
 
 
@@ -787,7 +765,7 @@ class Coach():
     in Game and NeuralNet. args are specified in main.py.
     """
 
-    def __init__(self, game, nnet, args):
+    def __init__(self, game, nnet, perBuf, args):
         self.game = game
         self.nnet = nnet
         self.pnet = self.nnet.__class__(self.game)  # the competitor network
@@ -796,6 +774,7 @@ class Coach():
         self.trainExamplesHistory = []  # history of examples from args.numItersForTrainExamplesHistory latest iterations
         self.skipFirstSelfPlay = False  # can be overriden in loadTrainExamples()
 
+        self.perBuf = perBuf
 
 
     def executeEpisode(self): 
@@ -855,22 +834,23 @@ class Coach():
                         pi = x[1]
                         v_pred = x[2]
 
-                        priority = abs(v_pred - target)
-
-                        # examples.append((x[0], x[1], target))
-                         
+                        priority = (v_pred - target)**2
+                        print(f'#### priority: {priority}')
+                 
                         # data augmentation
                         sym = self.game.getSymmetries(canonicalBoard, pi)
                         for b, p in sym:
+
                             examples.append((b, p, target)) 
                             priorities.append(priority)
-                        # self.iterationTrainExamples[priority] = (x[0], x[1], target)
 
+                            # self.perBuf.addExample(priority, (b, p, target))
+                       
                         target = gamma * target
-                
-                return examples, priorities
-                # return [(x[0], x[2], r * ((-1) ** (x[1] != self.curPlayer))) for x in trainExamples]
- 
+
+                self.perBuf.addExamples(priorities, examples)
+                # return examples, priorities
+              
 
     def learn(self): 
 
@@ -883,98 +863,48 @@ class Coach():
             for j in range(self.args.numEps):
                 print(f'#### iter: {i}, eps: {j} ####')
                 # self.mcts = MCTS(self.game, self.nnet, self.args)  # reset search tree
-                e, p = self.executeEpisode()
-                examples += e
-                priorities += p
+                
+                # e, p = self.executeEpisode()
+                # examples += e
+                # priorities += p
+                self.executeEpisode()
 
-            self.trainExamplesHistory.append(examples)
+            # self.trainExamplesHistory.append(examples)
 
 
-            if len(self.trainExamplesHistory) > self.args.numItersForTrainExamplesHistory:                
-                self.trainExamplesHistory.pop(0)
+            # if len(self.trainExamplesHistory) > self.args.numItersForTrainExamplesHistory:                
+            #     self.trainExamplesHistory.pop(0)
           
             # self.saveTrainExamples(i - 1)
  
-            trainExamples = []
-            for e in self.trainExamplesHistory:
-                trainExamples.extend(e)
+            # trainExamples = []
+            # for e in self.trainExamplesHistory:
+            #     trainExamples.extend(e)
 
 
-            shuffle(trainExamples)
+            # shuffle(trainExamples)
  
             if (i % 5 == 0):
-                self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=f'iter3-{i}.pth.tar')
+                self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=f'iter2-{i}.pth.tar')
         
             # trainExamples = self.getTopPriorityExamples(examples, priorities, 0.5)
             # print(f'len(trainExamples): {len(trainExamples)}, len(examples): {len(examples)}')
             # shuffle(examples)
+
+
+            trainExamples = self.perBuf.getTopPriorityExamples()
+            shuffle(trainExamples)
             self.nnet.train(trainExamples)
          
 
-    def getTopPriorityExamples(self, examples, priorities, thre):
-        # print(f'########### priorities: {priorities}')
-        probs = list(np.array(priorities) / sum(priorities))
-        # sel = probs > thre
-        out = []
-        for i, prob in enumerate(probs):
-            print(i, prob)
-            if(prob > thre):
-                out.append(examples[i])
-        return out
-        # print(f'########### len(examples): {np.array(examples).shape}, len(sel): {len(sel)}')
-        # return np.array(examples)[sel]
 
-
-
-
-
-
-
-
-
-
-
+         
 
     def getCheckpointFile(self, iteration):
         return 'checkpoint_' + str(iteration) + '.pth.tar'
 
 
-
-    def saveTrainExamples(self, iteration):
-
-        folder = self.args.checkpoint
-
-        if not os.path.exists(folder):
-            os.makedirs(folder)
-        
-        filename = os.path.join(folder, self.getCheckpointFile(iteration) + ".examples")
-
-        with open(filename, "wb+") as f:
-            Pickler(f).dump(self.trainExamplesHistory)
-
-        f.closed
-
-
-    def loadTrainExamples(self, path):
-
-        with open(path, "rb") as f:
-            self.trainExamplesHistory = Unpickler(f).load()
-           
-
-
-        # modelFile = os.path.join(self.args.load_folder_file[0], self.args.load_folder_file[1])
-        # examplesFile = modelFile + ".examples"
-
-        # if not os.path.isfile(examplesFile):             
-        #     r = input("Continue? [y|n]")
-        #     if r != "y": sys.exit()
-        # else:
-             
-        #     with open(examplesFile, "rb") as f:
-        #         self.trainExamplesHistory = Unpickler(f).load()
-           
-        #     self.skipFirstSelfPlay = True
-
+ 
 
 
 
@@ -983,13 +913,15 @@ def train():
 
 
     game = TicTacToeGame(4)
+    perBuf = PrioritizeExperienceReplayBuffer()
     nnet = NNetWrapper(game)
+    
 
-    # nnet.load_checkpoint('temp', 'iter3-50.h5')
+    nnet.load_checkpoint('temp', 'iter1-12.h5')
 
     args = dotdict({
         'numIters': 100000,
-        'numEps': 1,                # Number of complete self-play games to simulate during a new iteration.
+        'numEps': 10,                # Number of complete self-play games to simulate during a new iteration.
         'tempThreshold': 15,        #
         'updateThreshold': 0.6,     # During arena playoff, new neural net will be accepted if threshold or more of games are won.
         'maxlenOfQueue': 200000,    # Number of game examples to train the neural networks.
@@ -1003,7 +935,8 @@ def train():
     })
 
 
-    c = Coach(game, nnet, args) 
+
+    c = Coach(game, nnet, perBuf, args) 
     c.learn()
 
 
