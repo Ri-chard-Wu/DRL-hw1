@@ -10,7 +10,8 @@ from tensorflow.keras.models import *
 from tensorflow.keras.layers import *
 from tensorflow.keras.optimizers import *
 from random import shuffle
-
+import tensorflow.keras.backend as K
+import tensorflow as tf
 
 EPS = 1e-8
 
@@ -33,7 +34,7 @@ class TicTacToeNNet():
 
         x_image = Reshape((self.board_z, self.board_x, self.board_y, 1))(self.input_boards)                # batch_size  x board_x x board_y x 1
         
-        
+
         h_conv1 = Activation('relu')(
             BatchNormalization(axis=3)(
                 # 3 * 3 * args.num_channels * 4
@@ -143,8 +144,10 @@ class NNetWrapper():
 
         # run
         pi, v = self.nnet.model.predict(board, verbose=False)
+        K.clear_session()
+        tf.keras.backend.clear_session()
 
-
+        # print(f'type(pi): {type(pi)}')
         #print('PREDICTION TIME TAKEN : {0:03f}'.format(time.time()-start))
         return pi[0], v[0]
 
@@ -586,9 +589,12 @@ class MCTS():
 
         if s not in self.Ps:
 
-            # leaf node
-            # self.Ps[s]: 1d array, probability over all actions.
+            # # leaf node
+            # # self.Ps[s]: 1d array, probability over all actions.
             self.Ps[s], v = self.nnet.predict(canonicalBoard)
+        
+
+            # self.Ps[s], v = np.zeros(65), 0.5
 
             # a list of 0 and 1.
             valids = self.game.getValidMoves(canonicalBoard, 1)
@@ -694,6 +700,7 @@ class Coach():
 
             if r != 0:
                 # (canonicalBoard, pi, v)
+                print(f'len(trainExamples): {len(trainExamples)}')
                 return [(x[0], x[2], r * ((-1) ** (x[1] != self.curPlayer))) for x in trainExamples]
 
 
@@ -709,6 +716,7 @@ class Coach():
                 print(f'#### iter: {i}, eps: {j} ####')
                 self.mcts = MCTS(self.game, self.nnet, self.args)  # reset search tree
                 iterationTrainExamples += self.executeEpisode()
+                # self.executeEpisode()
 
             # save the iteration examples to the history 
             # print(f'len(iterationTrainExamples)')
@@ -720,6 +728,7 @@ class Coach():
           
             # self.saveTrainExamples(i - 1)
 
+            # print(f'len(iterationTrainExamples): {len(iterationTrainExamples)}, len(self.trainExamplesHistory): {len(self.trainExamplesHistory)}')
 
             trainExamples = []
             for e in self.trainExamplesHistory:
@@ -728,7 +737,8 @@ class Coach():
 
             shuffle(trainExamples)
  
-            self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=f'iter{i}.pth.tar')
+            if (i % 5 == 0):
+                self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=f'iter3-{i}.pth.tar')
         
             self.nnet.train(trainExamples)
          
@@ -783,9 +793,12 @@ def train():
 
     game = TicTacToeGame(4)
     nnet = NNetWrapper(game)
+
+    nnet.load_checkpoint('temp', 'iter2-12.h5')
+
     args = dotdict({
-        'numIters': 1000,
-        'numEps': 1,                # Number of complete self-play games to simulate during a new iteration.
+        'numIters': 10000,
+        'numEps': 5,                # Number of complete self-play games to simulate during a new iteration.
         'tempThreshold': 15,        #
         'updateThreshold': 0.6,     # During arena playoff, new neural net will be accepted if threshold or more of games are won.
         'maxlenOfQueue': 200000,    # Number of game examples to train the neural networks.
@@ -795,7 +808,7 @@ def train():
 
         'checkpoint': './temp/',
         'load_model': False, 
-        'numItersForTrainExamplesHistory': 20
+        'numItersForTrainExamplesHistory': 2
     })
 
 
