@@ -15,9 +15,11 @@ import tensorflow as tf
 
 EPS = 1e-8
 
-numEps = 20
-epoches = 1000
-
+numEps = 100 #50
+batch_size = 64
+perBuf_size = 2**20
+epochs = 10
+# save_every_n_iter = 1
 
 class dotdict(dict):
     def __getattr__(self, name):
@@ -28,9 +30,8 @@ class PrioritizeExperienceReplayBuffer():
 
     def __init__(self):
         self.buf = []
-        self.priorities = []
-        self.batch = 64
-        self.maxLength = 2**12 
+        self.priorities = [] 
+        self.maxLength = perBuf_size
         self.pendingUpdate = False
         self.beta = 1.0
     
@@ -52,6 +53,8 @@ class PrioritizeExperienceReplayBuffer():
         self.buf.extend(examples)
         self.priorities.extend(priorities)
             
+    def getExampleNum(self):
+        return len(self.buf)
 
     def getTopPriorityExamples(self, n):
         
@@ -184,8 +187,8 @@ class NNetWrapper():
         self.args = dotdict({
             'lr': 0.001,
             'dropout': 0.3,
-            'epochs': epoches,
-            'batch_size': 64,
+            'epochs': epochs,
+            'batch_size': batch_size,
             'cuda': False,
             'num_channels': 256,
         }) 
@@ -202,18 +205,25 @@ class NNetWrapper():
         batch_size = self.args.batch_size
  
         train_losses = []
-        for epoch in range(self.args.epochs): 
-            examples, learning_weights = perBuf.getTopPriorityExamples(batch_size)
-            
-            b, pis, vs = list(zip(*examples))
+        
 
-            b = tf.convert_to_tensor(b, dtype=tf.float32)
-            pis = tf.convert_to_tensor(pis, dtype=tf.float32)
-            vs = tf.convert_to_tensor(vs, dtype=tf.float32)
- 
-            total_loss, td_losses = self.model.train_step((b, pis, vs), learning_weights)
-            train_losses.append(np.mean(total_loss.numpy()))             
-            perBuf.updatePriorities(td_losses.numpy())
+        for epoch in range(self.args.epochs): 
+
+            n = int(perBuf.getExampleNum() / batch_size)
+            # print(f'self.args.epochs: {self.args.epochs}, n: {n}')
+            for i in range(n):
+
+                examples, learning_weights = perBuf.getTopPriorityExamples(batch_size)
+                
+                b, pis, vs = list(zip(*examples))
+
+                b = tf.convert_to_tensor(b, dtype=tf.float32)
+                pis = tf.convert_to_tensor(pis, dtype=tf.float32)
+                vs = tf.convert_to_tensor(vs, dtype=tf.float32)
+    
+                total_loss, td_losses = self.model.train_step((b, pis, vs), learning_weights)
+                train_losses.append(np.mean(total_loss.numpy()))             
+                perBuf.updatePriorities(td_losses.numpy())
        
         # print(f"avg_train_loss: {np.mean(train_losses)}")
         return np.mean(train_losses)
@@ -235,14 +245,14 @@ class NNetWrapper():
 
     def save_checkpoint(self, folder='checkpoint', filename='checkpoint.pth.tar'):
         
+        print('saved ckpt')
+
         filename = filename.split(".")[0] + ".h5"
         
         filepath = os.path.join(folder, filename)
         if not os.path.exists(folder):
-            print("Checkpoint Directory does not exist! Making directory {}".format(folder))
             os.mkdir(folder)
-        else:
-            print("Checkpoint Directory exists! ")
+        
         self.model.save_weights(filepath)
 
 
@@ -630,10 +640,12 @@ class MCTS():
         self.Qsa = {}  # stores Q values for s,a (as defined in the paper)
         self.Nsa = {}  # stores #times edge s,a was visited
         self.Ns = {}  # stores #times board s was visited
+        
         self.Ps = {}  # stores initial policy (returned by neural net)
+        self.Vs = {}
 
         self.Es = {}  # stores game.getGameEnded ended for board s
-        self.Vs = {}  # stores game.getValidMoves for board s
+        self.Valids = {}  # stores game.getValidMoves for board s
  
 
     def getActionProb(self, canonicalBoard, temp=1):
@@ -643,6 +655,8 @@ class MCTS():
 
         s = self.game.stringRepresentation(canonicalBoard)
         counts = [self.Nsa[(s, a)] if (s, a) in self.Nsa else 0 for a in range(self.game.getActionSize())]
+
+        v = self.Vs[s]
 
         if temp == 0: # yes for pit, no for train
             bestAs = np.array(np.argwhere(counts == np.max(counts))).flatten()
@@ -654,6 +668,7 @@ class MCTS():
         counts = [x ** (1. / temp) for x in counts]
         counts_sum = float(sum(counts))
         probs = [x / counts_sum for x in counts]
+        # return probs, v
         return probs
 
  
@@ -673,8 +688,8 @@ class MCTS():
 
             # # leaf node
             # # self.Ps[s]: 1d array, probability over all actions.
-            self.Ps[s], v = self.nnet.predict(canonicalBoard)
-        
+            self.Ps[s], v = self.nnet.predict(canonicalBoard)          
+            self.Vs[s] = v[0]
 
             # self.Ps[s], v = np.zeros(65), 0.5
 
@@ -691,11 +706,11 @@ class MCTS():
                 self.Ps[s] = self.Ps[s] + valids
                 self.Ps[s] /= np.sum(self.Ps[s])
 
-            self.Vs[s] = valids
+            self.Valids[s] = valids
             self.Ns[s] = 0
             return -v
 
-        valids = self.Vs[s]
+        valids = self.Valids[s]
         cur_best = -float('inf')
         best_act = -1
 
@@ -737,167 +752,6 @@ class MCTS():
  
 
 
-class Coach():
-    """
-    This class executes the self-play + learning. It uses the functions defined
-    in Game and NeuralNet. args are specified in main.py.
-    """
-
-    def __init__(self, game, nnet, perBuf, args):
-        self.game = game
-        self.nnet = nnet
-        self.pnet = self.nnet.__class__(self.game)  # the competitor network
-        self.args = args
-        self.mcts = MCTS(self.game, self.nnet, self.args)
-        self.trainExamplesHistory = []  # history of examples from args.numItersForTrainExamplesHistory latest iterations
-        self.skipFirstSelfPlay = False  # can be overriden in loadTrainExamples()
-
-        self.perBuf = perBuf
-
-
-    def executeEpisode(self): 
-
-        trainExamples = {1: [], -1: []}
-        board = self.game.getInitBoard() # an np array of shape 4x4x4
-        self.curPlayer = 1
-        episodeStep = 0 
-
-        while True:
-
-            episodeStep += 1
-            
-            canonicalBoard = self.game.getCanonicalForm(board, self.curPlayer)
-
-            temp = int(episodeStep < self.args.tempThreshold)
-            # pi = self.mcts.getActionProb(canonicalBoard, temp=temp)
-            # v = [0]
-
-            pi, v = self.nnet.predict(canonicalBoard)
-            valids = self.game.getValidMoves(canonicalBoard, 1) 
-            pi = pi * valids
-
-            sum_Ps_s = np.sum(pi)
-            if sum_Ps_s > 0:
-                pi /= sum_Ps_s   
-            else: 
-                pi = pi + valids
-                pi /= np.sum(pi) 
-                 
-            if episodeStep > self.args.tempThreshold: # deterministic
-                idx = np.argmax(pi)
-                pi = np.zeros(len(pi))    
-                pi[idx] = 1.0
-
- 
-                
-            trainExamples[self.curPlayer].append([canonicalBoard, pi, v[0]])
-
-            action = np.random.choice(len(pi), p=pi)
-            board, self.curPlayer = self.game.getNextState(board, self.curPlayer, action)
-
-            r = self.game.getGameEnded(board, self.curPlayer)
-
-            
-            if r != 0:  
-                examples = []
-                priorities = []
-                for player in trainExamples:
-                    
-                    gamma = 0.9
-                    target = r * ((-1) ** (player != self.curPlayer))
-
-                    for x in reversed(trainExamples[player]):
-                        
-                        canonicalBoard = x[0]
-                        pi = x[1]
-                        v_pred = x[2]
-
-                        priority = (v_pred - target)**2 
-                 
-                        # data augmentation
-                        sym = self.game.getSymmetries(canonicalBoard, pi)
-                        for b, p in sym: 
-                            examples.append((b, p, target)) 
-                            priorities.append(priority) 
-                       
-                        target = gamma * target
-                return examples, priorities
-              
-
-    def learn(self): 
-
-        for i in range(1, self.args.numIters + 1): 
-
-            examples, priorities = [], []
-
-            for j in range(self.args.numEps):
-                # print(f'#### iter: {i}, eps: {j} ####') 
-                e, p = self.executeEpisode()
-                examples += e
-                priorities += p 
-
-            self.perBuf.addExamples(priorities, examples)
-         
-            loss = self.nnet.train(self.perBuf)
-
-            print(f'#### iter: {i}, loss: {loss} ####') 
-
-            if (i % 10 == 0):
-                self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=f'iter5-{i}.pth.tar')
-
-         
-
-    def getCheckpointFile(self, iteration):
-        return 'checkpoint_' + str(iteration) + '.pth.tar'
-
-
- 
-
-
-
-def train():
-
-
-
-    game = TicTacToeGame(4)
-    perBuf = PrioritizeExperienceReplayBuffer()
-    nnet = NNetWrapper(game)
-    
-
-    nnet.load_checkpoint('backup', 'iter4-90.h5')
-
-    args = dotdict({
-        'numIters': 100000,
-        'numEps': numEps,                # Number of complete self-play games to simulate during a new iteration.
-        'tempThreshold': 15,        #
-        'updateThreshold': 0.6,     # During arena playoff, new neural net will be accepted if threshold or more of games are won.
-        'maxlenOfQueue': 200000,    # Number of game examples to train the neural networks.
-        'numMCTSSims': 25,          # Number of games moves for MCTS to simulate.
-        'arenaCompare': 40,         # Number of games to play during arena play to determine if new net will be accepted.
-        'cpuct': 1,
-
-        'checkpoint': './temp/',
-        'load_model': False, 
-        'numItersForTrainExamplesHistory': 5
-    })
-
-
-
-    c = Coach(game, nnet, perBuf, args) 
-    c.learn()
-
-
-
-
-
-train()
-
-
-
-
-
-
-
 
 class Arena(): 
     def __init__(self, player1, player2, game, display=None):
@@ -910,6 +764,7 @@ class Arena():
 
 
     def playGame(self, verbose=False):
+        
          
         players = [self.player2, None, self.player1]
         curPlayer = 1
@@ -951,6 +806,7 @@ class Arena():
         twoWon = 0
         draws = 0
         for _ in range(num) :
+            # print(f'playGame{_}')
             gameResult = self.playGame(verbose=verbose)
             if gameResult == 1:
                 oneWon += 1
@@ -962,6 +818,7 @@ class Arena():
         self.player1, self.player2 = self.player2, self.player1
 
         for _ in range(num):
+            # print(f'playGame{num+_}')
             gameResult = self.playGame(verbose=verbose)
             if gameResult == -1:
                 oneWon += 1
@@ -971,6 +828,204 @@ class Arena():
                 draws += 1
 
         return oneWon, twoWon, draws
+
+
+
+
+
+class Coach():
+    """
+    This class executes the self-play + learning. It uses the functions defined
+    in Game and NeuralNet. args are specified in main.py.
+    """
+
+    def __init__(self, game, nnet, perBuf, args):
+        self.game = game
+        self.nnet = nnet
+        self.pnet = self.nnet.__class__(self.game)  # the competitor network
+        self.args = args
+        self.mcts = MCTS(self.game, self.nnet, self.args)
+        self.trainExamplesHistory = []  # history of examples from args.numItersForTrainExamplesHistory latest iterations
+        self.skipFirstSelfPlay = False  # can be overriden in loadTrainExamples()
+
+        self.perBuf = perBuf
+
+
+    def executeEpisode(self): 
+
+        trainExamples = {1: [], -1: []}
+        board = self.game.getInitBoard() # an np array of shape 4x4x4
+        self.curPlayer = 1
+        episodeStep = 0 
+
+        while True:
+
+            episodeStep += 1
+            
+            canonicalBoard = self.game.getCanonicalForm(board, self.curPlayer)
+
+            # temp = int(episodeStep < self.args.tempThreshold)
+            # pi, v = self.mcts.getActionProb(canonicalBoard, temp=temp)
+            
+
+            pi, v = self.nnet.predict(canonicalBoard)
+            v = v[0]
+            valids = self.game.getValidMoves(canonicalBoard, 1) 
+            pi = pi * valids
+
+            sum_Ps_s = np.sum(pi)
+            if sum_Ps_s > 0:
+                pi /= sum_Ps_s   
+            else: 
+                pi = pi + valids
+                pi /= np.sum(pi) 
+                 
+            if episodeStep > self.args.tempThreshold: # deterministic
+                idx = np.argmax(pi)
+                pi = np.zeros(len(pi))    
+                pi[idx] = 1.0
+
+ 
+                
+            # trainExamples[self.curPlayer].append([canonicalBoard, pi, v[0]])
+            trainExamples[self.curPlayer].append([canonicalBoard, pi, v])
+
+            action = np.random.choice(len(pi), p=pi)
+            board, self.curPlayer = self.game.getNextState(board, self.curPlayer, action)
+
+            r = self.game.getGameEnded(board, self.curPlayer)
+
+            
+            if r != 0:  
+                examples = []
+                priorities = []
+                for player in trainExamples:
+                    
+                    gamma = 0.9
+                    target = r * ((-1) ** (player != self.curPlayer))
+
+                    for x in reversed(trainExamples[player]):
+                        
+                        canonicalBoard = x[0]
+                        pi = x[1]
+                        v_pred = x[2]
+
+                        priority = (v_pred - target)**2 
+                 
+                        # data augmentation
+                        sym = self.game.getSymmetries(canonicalBoard, pi)
+                        for b, p in sym: 
+                            examples.append((b, p, target)) 
+                            priorities.append(priority) 
+                       
+                        target = gamma * target
+                return examples, priorities
+              
+
+    def learn(self): 
+
+        for i in range(1, self.args.numIters + 1): 
+            print('####################')
+            print(f'iter: {i}') 
+
+            examples, priorities = [], []
+
+            print('collecting data...')
+            for j in range(self.args.numEps):
+                # print(f'#### iter: {i}, eps: {j} ####') 
+                # self.mcts = MCTS(self.game, self.nnet, self.args) 
+                e, p = self.executeEpisode()
+                examples += e
+                priorities += p 
+
+            self.perBuf.addExamples(priorities, examples)
+         
+            # loss = self.nnet.train(self.perBuf)
+
+            # print(f'#### iter: {i}, loss: {loss} ####') 
+
+            # if (i % save_every_n_iter == 0):
+            #     self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=f'iter5-{i}.pth.tar')  
+            
+            
+            self.nnet.save_checkpoint(folder=self.args.checkpoint, filename='temp.pth.tar')
+            self.pnet.load_checkpoint(folder=self.args.checkpoint, filename='temp.pth.tar')
+            pmcts = MCTS(self.game, self.pnet, self.args)
+
+            print('training...')
+            loss = self.nnet.train(self.perBuf)
+            print(f'loss: {loss}') 
+            nmcts = MCTS(self.game, self.nnet, self.args)
+
+
+            print('pitting with old model...')
+            arena = Arena(lambda x: np.argmax(pmcts.getActionProb(x, temp=0)),
+                          lambda x: np.argmax(nmcts.getActionProb(x, temp=0)), self.game)
+            pwins, nwins, draws = arena.playGames(self.args.arenaCompare)
+ 
+            print(f'win rate: {float(nwins) / (pwins + nwins)}')
+
+            if pwins + nwins == 0 or float(nwins) / (pwins + nwins) < self.args.updateThreshold:
+                
+                self.nnet.load_checkpoint(folder=self.args.checkpoint, filename='temp.pth.tar')
+            else:
+                
+                self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=self.getCheckpointFile(i))
+                self.nnet.save_checkpoint(folder=self.args.checkpoint, filename='best.pth.tar')
+
+
+
+
+    def getCheckpointFile(self, iteration):
+        return 'checkpoint_' + str(iteration) + '.pth.tar'
+
+
+ 
+
+
+
+def train():
+
+
+
+    game = TicTacToeGame(4)
+    perBuf = PrioritizeExperienceReplayBuffer()
+    nnet = NNetWrapper(game)
+    
+
+    nnet.load_checkpoint('temp', 'iter5-710.h5')
+
+    args = dotdict({
+        'numIters': 100000,
+        'numEps': numEps,       
+        'tempThreshold': 10,  
+        
+        'updateThreshold': 0.6,
+        'arenaCompare': 10,
+
+        'numMCTSSims': 25,         
+        'cpuct': 1,
+
+        'checkpoint': './temp/',
+        'load_model': False, 
+        'numItersForTrainExamplesHistory': 5
+    })
+
+
+
+    c = Coach(game, nnet, perBuf, args) 
+    c.learn()
+
+
+
+
+
+train()
+
+
+
+
+
 
 
 class HumanTicTacToePlayer():
@@ -1012,7 +1067,7 @@ def evaluate():
 
     # nnet players
     n1 = NNetWrapper(g)
-    n1.load_checkpoint('./temp', 'iter20.h5')
+    n1.load_checkpoint('./temp', 'iter5-710.h5')
     args1 = dotdict({'numMCTSSims': 50, 'cpuct':1.0})
  
     mcts1 = MCTS(g, n1, args1) 
