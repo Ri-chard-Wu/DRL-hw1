@@ -15,11 +15,11 @@ import tensorflow as tf
 
 EPS = 1e-8
 
-numEps = 1 #50
+numEps = 50 #50
 batch_size = 64
-perBuf_size = 2**10 #2**17
-epochs = 2 # 5
-arenaCompare = 2 # 16
+perBuf_size = 2**16 #2**17
+epochs = 3 # 5
+arenaCompare = 16 # 16
 epsilon = 0.2
 gamma = 0.99
 # save_every_n_iter = 1
@@ -132,12 +132,12 @@ class TicTacToeNNet(tf.keras.Model):
         # self.fc_v = tf.keras.layers.Dense(1, activation='tanh', name='v') 
         
     
-    def max_Q(self, state):
-        # Q(s,a,theta) for all a, shape (batch_size, num_action)
-        output = self(state)
+    # def max_Q(self, state):
+    #     # Q(s,a,theta) for all a, shape (batch_size, num_action)
+    #     output = self(state)
 
-        # max(Q(s',a',theta')), shape (batch_size, 1)
-        return tf.reduce_max(output, axis=1)
+    #     # max(Q(s',a',theta')), shape (batch_size, 1)
+    #     return tf.reduce_max(output, axis=1)
 
     @tf.function
     def call(self, x, training=None):
@@ -181,13 +181,15 @@ class TicTacToeNNet(tf.keras.Model):
             index = tf.stack([tf.range(tf.shape(a)[0]), a], axis=1)
             q = tf.gather_nd(qa, index)
              
+            # td_loss = tf.keras.metrics.mean_squared_error(r + self.args.gamma * q_tar, q)
 
-            td_loss = tf.reduce_mean(tf.square(r + self.args.gamma * q_tar - q))
+            td_losses = tf.square(r + self.args.gamma * q_tar - q)
+            td_loss = tf.reduce_mean(td_losses)
             
             gradients = tape.gradient(td_loss, self.trainable_variables) 
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
-        return td_loss
+        return td_losses
         # return total_loss, td_loss
             
 
@@ -235,12 +237,11 @@ class NNetWrapper():
 
                 q_tar = []
                 for _s_next in s_next:
-                    qa_next = self.predict(_s_next)
-                    qa_next = np.array([i if i is not None for i in qa_next])                
-                    q_tar.append(max(-qa_next))
+                    qa_next = self.predict(_s_next) 
+                    q_tar = -min(np.array([np.inf if q is None else q for q in qa_next]))  
 
                 s = tf.convert_to_tensor(s, dtype=tf.float32)
-                a = tf.convert_to_tensor(a, dtype=tf.float32)
+                a = tf.convert_to_tensor(a, dtype=tf.int32)
                 r = tf.convert_to_tensor(r, dtype=tf.float32) 
                 q_tar = tf.convert_to_tensor(q_tar, dtype=tf.float32) 
 
@@ -249,12 +250,6 @@ class NNetWrapper():
                 perBuf.updatePriorities(td_losses.numpy())
         
         return np.mean(td_losses_all)
-
-    def minQ(self, state):
-        
-        qa = self.predict(state)
-        # prob = self.toProb(qa)
-        []
 
 
     def predict(self, canonicalBoard): 
@@ -283,6 +278,7 @@ class NNetWrapper():
     def act(self, canonicalBoard):
         
         qa = self.predict(canonicalBoard)
+        qa = np.array([-np.inf if qa[i] is None else qa[i] for i in range(len(qa))])                  
         pi = self.toProb(qa)
 
         action = np.random.choice(len(pi), p=pi)
@@ -990,15 +986,17 @@ class Coach():
                         a = x[2]
                         s_next = x[3]
                         qa_next = self.nnet.predict(s_next)
-                        qa_next = np.array([i if i is not None for i in qa_next])  
-                        q_tar = max(-qa_next) # opponent's lose is our gain.
+                        # qa_next = np.array([i if i is not None for i in qa_next])  
+                        # q_tar = max(-qa_next) # opponent's lose is our gain.
 
+                        q_tar = -min(np.array([np.inf if q is None else q for q in qa_next])) 
+                        
                         # data augmentation
                         sym = self.game.getSymmetries(s, a, s_next)
                         for s, a, s_next in sym: 
                             examples.append((s, a, reward, s_next)) 
 
-                            print(f'reward: {reward}, q_tar: {q_tar}, q: {q}')
+                            # print(f'reward: {reward}, q_tar: {q_tar}, q: {q}')
 
                             tdLoss = (reward + gamma * q_tar - q)**2 
                             
