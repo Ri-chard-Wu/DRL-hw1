@@ -17,8 +17,8 @@ EPS = 1e-8
 
 numEps = 50 #50
 batch_size = 64
-perBuf_size = 2**16 #2**17
-epochs = 3 # 5
+perBuf_size = 2**16 #2**16
+epochs = 5 # 5
 arenaCompare = 16 # 16
 epsilon = 0.2
 gamma = 0.99
@@ -235,10 +235,16 @@ class NNetWrapper():
                 
                 s, a, r, s_next = list(zip(*examples))
 
-                q_tar = []
-                for _s_next in s_next:
-                    qa_next = self.predict(_s_next) 
-                    q_tar = -min(np.array([np.inf if q is None else q for q in qa_next]))  
+                q_tar = []   
+                s_next = tf.convert_to_tensor(s_next, dtype=tf.float32) 
+                qa = self.model(s_next).numpy()   
+                K.clear_session()
+                tf.keras.backend.clear_session()                  
+                for i, _s in enumerate(s_next):
+                    valids = self.game.getValidMoves(_s, 1) 
+                    tmp = np.array([qa[i][j] if valids[j] else np.inf for j in range(len(valids))])
+                    q_tar.append(-min(tmp))
+ 
 
                 s = tf.convert_to_tensor(s, dtype=tf.float32)
                 a = tf.convert_to_tensor(a, dtype=tf.int32)
@@ -962,8 +968,6 @@ class Coach():
 
             nextCanonicalBoard = self.game.getCanonicalForm(nextBoard, nextPlayer)
 
-            # print(f'qa[a]: {qa[a]}')
-
             trainExamples[self.curPlayer].append([canonicalBoard, qa[a], a, nextCanonicalBoard])
             
             self.curPlayer = nextPlayer
@@ -985,21 +989,16 @@ class Coach():
                         q = x[1]
                         a = x[2]
                         s_next = x[3]
-                        qa_next = self.nnet.predict(s_next)
-                        # qa_next = np.array([i if i is not None for i in qa_next])  
-                        # q_tar = max(-qa_next) # opponent's lose is our gain.
+                        qa_next = self.nnet.predict(s_next) 
 
+                        # opponent's lose is our gain.
                         q_tar = -min(np.array([np.inf if q is None else q for q in qa_next])) 
                         
                         # data augmentation
                         sym = self.game.getSymmetries(s, a, s_next)
                         for s, a, s_next in sym: 
-                            examples.append((s, a, reward, s_next)) 
-
-                            # print(f'reward: {reward}, q_tar: {q_tar}, q: {q}')
-
-                            tdLoss = (reward + gamma * q_tar - q)**2 
-                            
+                            examples.append((s, a, reward, s_next))  
+                            tdLoss = (reward + gamma * q_tar - q)**2  
                             priorities.append(tdLoss)  
 
                         reward = gamma * reward
