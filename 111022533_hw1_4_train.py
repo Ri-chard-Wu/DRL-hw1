@@ -15,11 +15,11 @@ import tensorflow as tf
 
 EPS = 1e-8
 
-numEps = 50 #50
+numEps = 1 #50
 batch_size = 64
-perBuf_size = 2**17 #2**18
-epochs = 5
-arenaCompare = 16
+perBuf_size = 2**10 #2**17
+epochs = 2 # 5
+arenaCompare = 2 # 16
 epsilon = 0.2
 gamma = 0.99
 # save_every_n_iter = 1
@@ -132,6 +132,12 @@ class TicTacToeNNet(tf.keras.Model):
         # self.fc_v = tf.keras.layers.Dense(1, activation='tanh', name='v') 
         
     
+    def max_Q(self, state):
+        # Q(s,a,theta) for all a, shape (batch_size, num_action)
+        output = self(state)
+
+        # max(Q(s',a',theta')), shape (batch_size, 1)
+        return tf.reduce_max(output, axis=1)
 
     @tf.function
     def call(self, x, training=None):
@@ -161,29 +167,7 @@ class TicTacToeNNet(tf.keras.Model):
         # return prob_a, v
         return qa
  
-
-    # @tf.function
-    # def train_step(self, data, learning_weights): 
-
-    #     # x: [bz, 4, 4, 4], a_prob: [bz, 65], v: [bz,]        
-    #     x, a_prob, v = data 
-
-    #     with tf.GradientTape() as tape:
-            
-    #         a_prob_pred, v_pred = self(x)
-
-
-    #         a_loss = tf.keras.losses.categorical_crossentropy(a_prob, a_prob_pred)
-    #         td_loss = tf.keras.metrics.mean_squared_error(v, v_pred)
-    #         total_loss = (a_loss + td_loss) * learning_weights
-
-    #         gradients = tape.gradient(total_loss, self.trainable_variables) 
-    #         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
-
-    #     return total_loss, td_loss
-            
-
-
+ 
 
     @tf.function
     def train_step(self, data, learning_weights): 
@@ -216,7 +200,7 @@ class NNetWrapper():
 
         self.args = dotdict({
             'lr': 0.001,
-            'gamma': gamma
+            'gamma': gamma,
             'dropout': 0.3,
             'epochs': epochs,
             'batch_size': batch_size,
@@ -230,37 +214,7 @@ class NNetWrapper():
 
         self.board_z, self.board_x, self.board_y = game.getBoardSize()
         self.action_size = game.getActionSize()
-
-    
-
-    # def train(self, perBuf):   
-        
-    #     batch_size = self.args.batch_size
  
-    #     train_losses = []
-        
-
-    #     for epoch in range(self.args.epochs): 
-
-    #         n = int(perBuf.getExampleNum() / batch_size)
-    #         # print(f'self.args.epochs: {self.args.epochs}, n: {n}')
-    #         for i in range(n):
-
-    #             examples, learning_weights = perBuf.getTopPriorityExamples(batch_size)
-                
-    #             b, pis, vs = list(zip(*examples))
-
-    #             b = tf.convert_to_tensor(b, dtype=tf.float32)
-    #             pis = tf.convert_to_tensor(pis, dtype=tf.float32)
-    #             vs = tf.convert_to_tensor(vs, dtype=tf.float32)
-    
-    #             total_loss, td_losses = self.model.train_step((b, pis, vs), learning_weights)
-    #             train_losses.append(np.mean(total_loss.numpy()))             
-    #             perBuf.updatePriorities(td_losses.numpy())
-       
-    #     # print(f"avg_train_loss: {np.mean(train_losses)}")
-    #     return np.mean(train_losses)
-
 
 
     def train(self, perBuf):   
@@ -272,19 +226,23 @@ class NNetWrapper():
 
         for epoch in range(self.args.epochs): 
 
-            n = int(perBuf.getExampleNum() / batch_size)
-            # print(f'self.args.epochs: {self.args.epochs}, n: {n}')
+            n = int(perBuf.getExampleNum() / batch_size) 
             for i in range(n):
 
                 examples, learning_weights = perBuf.getTopPriorityExamples(batch_size)
                 
                 s, a, r, s_next = list(zip(*examples))
 
+                q_tar = []
+                for _s_next in s_next:
+                    qa_next = self.predict(_s_next)
+                    qa_next = np.array([i if i is not None for i in qa_next])                
+                    q_tar.append(max(-qa_next))
+
                 s = tf.convert_to_tensor(s, dtype=tf.float32)
                 a = tf.convert_to_tensor(a, dtype=tf.float32)
-                r = tf.convert_to_tensor(r, dtype=tf.float32)
-                s_next = tf.convert_to_tensor(s_next, dtype=tf.float32)
-                q_tar = self.model.maxQ(s_next)
+                r = tf.convert_to_tensor(r, dtype=tf.float32) 
+                q_tar = tf.convert_to_tensor(q_tar, dtype=tf.float32) 
 
                 td_losses = self.model.train_step((s, a, r, q_tar), learning_weights)
                 td_losses_all.append(np.mean(td_losses.numpy()))             
@@ -292,74 +250,45 @@ class NNetWrapper():
         
         return np.mean(td_losses_all)
 
-
-    # def predict(self, canonicalBoard): 
-
-    #     board = canonicalBoard[np.newaxis, :, :] 
-    #     board = tf.convert_to_tensor(board, dtype=tf.float32)
-    #     # print(f'########## board.shape: {board.shape}')
-    #     pi, v = self.model(board) 
+    def minQ(self, state):
         
-    #     K.clear_session()
-    #     tf.keras.backend.clear_session() 
-
-    #     pi = pi[0].numpy()
-    #     v = v[0].numpy()[0]
- 
-
-    #     valids = self.game.getValidMoves(canonicalBoard, 1) 
-        
-    #     pi = pi * valids
-
-    #     sum_Ps_s = np.sum(pi)
-    #     if sum_Ps_s > 0:
-    #         pi /= sum_Ps_s   
-    #     else: 
-    #         pi = pi + valids
-    #         pi /= np.sum(pi)         
-
-    #     return pi, v
+        qa = self.predict(state)
+        # prob = self.toProb(qa)
+        []
 
 
     def predict(self, canonicalBoard): 
 
         board = canonicalBoard[np.newaxis, :, :] 
         board = tf.convert_to_tensor(board, dtype=tf.float32)
-        # print(f'########## board.shape: {board.shape}')
+        
         qa = self.model(board) 
         
         K.clear_session()
         tf.keras.backend.clear_session() 
 
-        qa = qa[0].numpy()
-  
+        qa = qa[0].numpy() 
 
-        valids = self.game.getValidMoves(canonicalBoard, 1) 
-        # valids = np.array([1 if v else -np.inf for v in valids])
-        qa = np.array([qa[i] if valids[i] else -np.inf for i in range(len(valids))])
-
-        # qa = qa * valids
-
-        # sum_Ps_s = np.sum(qa)
-        # if sum_Ps_s > 0:
-        #     pi /= sum_Ps_s   
-        # else: 
-        #     pi = pi + valids
-        #     pi /= np.sum(pi)         
-
+        valids = self.game.getValidMoves(canonicalBoard, 1)  
+        qa = np.array([qa[i] if valids[i] else None for i in range(len(valids))])
+ 
         return qa
 
-    def toProb(self, qa):
 
+
+    def toProb(self, qa): 
         return np.exp(qa) / np.sum(np.exp(qa), axis=0)
+
 
     def act(self, canonicalBoard):
         
-        pi = self.predict(canonicalBoard)[0]
+        qa = self.predict(canonicalBoard)
+        pi = self.toProb(qa)
 
         action = np.random.choice(len(pi), p=pi)
 
         return action
+
 
     def save_checkpoint(self, folder='checkpoint', filename='checkpoint.pth.tar'):
         
@@ -423,8 +352,8 @@ class Board():
         for z in range(self.n): 
             for y in range(self.n):
                 for x in range(self.n):
-                    if self.pieces[z][x][y]==0:
-                        newmove = (z,x,y)
+                    if self.pieces[z][y][x]==0:
+                        newmove = (z,y,x)
                         moves.add(newmove)
         return list(moves)
 
@@ -617,11 +546,11 @@ class Board():
         color gives the color pf the piece to play (1=white,-1=black)
         """
 
-        (z,x,y) = move
+        (z,y,x) = move
 
         # Add the piece to the empty square.
-        assert self.pieces[z][x][y] == 0
-        self.pieces[z][x][y] = color
+        assert self.pieces[z][y][x] == 0
+        self.pieces[z][y][x] = color
 
 
 
@@ -641,18 +570,21 @@ class TicTacToeGame():
 
     def getActionSize(self):
         # return number of actions
-        return self.n*self.n*self.n + 1
+        return self.n*self.n*self.n
 
     def getNextState(self, board, player, action):
         # if player takes action on board, return next (board,player)
         # action must be a valid move
-        if action == self.n*self.n*self.n:
-            return (board, -player)
+        # if action == self.n*self.n*self.n:
+        #     return (board, -player)
+
         b = Board(self.n)
         b.pieces = np.copy(board)
         boardvalues = np.arange(0,(self.n*self.n*self.n)).reshape(self.n,self.n,self.n)
         
+        # z, y, x
         move = np.argwhere(boardvalues==action)[0]
+        
         b.execute_move(move, player)
         return (b.pieces, -player)
 
@@ -662,12 +594,14 @@ class TicTacToeGame():
         b = Board(self.n)
         b.pieces = np.copy(board)
         legalMoves =  b.get_legal_moves(player)
-        if len(legalMoves)==0:
-            valids[-1]=1
-            return np.array(valids)
-        for z, x, y in legalMoves:
+
+        # if len(legalMoves)==0:
+        #     valids[-1]=1
+        #     return np.array(valids)
+
+        for z, y, x in legalMoves:
             boardvalues = np.arange(0,(self.n*self.n*self.n)).reshape(self.n,self.n,self.n)
-            valids[boardvalues[z][x][y]] = 1
+            valids[boardvalues[z][y][x]] = 1
         return np.array(valids)
 
     def getGameEnded(self, board, player):
@@ -689,11 +623,40 @@ class TicTacToeGame():
         return player*board
 
 
-    def getSymmetries(self, board, pi):
+    # def getSymmetries(self, board, pi):
+    #     # mirror, rotational
+    #     pi_board = np.reshape(pi, (self.n, self.n, self.n))
+    #     l = []
+    #     newB = np.reshape(board, (self.n*self.n, self.n))
+    #     newPi = pi_board
+    #     for i in range(1,5):
+
+    #         for z in [True, False]:
+    #             for j in [True, False]:
+    #                 if j:
+    #                     newB = np.fliplr(newB)
+    #                     newPi = np.fliplr(newPi)
+    #                 if z:
+    #                     newB = np.flipud(newB)
+    #                     newPi = np.flipud(newPi)
+                    
+    #                 newB = np.reshape(newB, (self.n,self.n,self.n))
+    #                 newPi = np.reshape(newPi, (self.n,self.n,self.n))
+    #                 l += [(newB, list(newPi.ravel()) + [pi[-1]])]
+    #     return l
+    
+
+    def getSymmetries(self, board, a, board_next):
         # mirror, rotational
-        pi_board = np.reshape(pi[:-1], (self.n, self.n, self.n))
+        pi = np.zeros(self.n*self.n*self.n)
+        pi[a] = 1
+
+        pi_board = np.reshape(pi, (self.n, self.n, self.n))
         l = []
+        
         newB = np.reshape(board, (self.n*self.n, self.n))
+        newB_next = np.reshape(board_next, (self.n*self.n, self.n))
+
         newPi = pi_board
         for i in range(1,5):
 
@@ -701,17 +664,24 @@ class TicTacToeGame():
                 for j in [True, False]:
                     if j:
                         newB = np.fliplr(newB)
+                        newB_next = np.fliplr(newB_next)
                         newPi = np.fliplr(newPi)
                     if z:
                         newB = np.flipud(newB)
+                        newB_next = np.flipud(newB_next)
                         newPi = np.flipud(newPi)
                     
                     newB = np.reshape(newB, (self.n,self.n,self.n))
+                    newB_next = np.reshape(newB_next, (self.n,self.n,self.n))
                     newPi = np.reshape(newPi, (self.n,self.n,self.n))
-                    l += [(newB, list(newPi.ravel()) + [pi[-1]])]
+                     
+                    l += [(newB, np.argmax(list(newPi.ravel())), newB_next)]
         return l
-    
 
+
+
+
+    
 
     def stringRepresentation(self, board): 
         return board.tostring()
@@ -749,123 +719,123 @@ class TicTacToeGame():
             print("--")
 
 
-class MCTS():
+# class MCTS():
      
-    def __init__(self, game, nnet, args):
-        self.game = game
-        self.nnet = nnet
-        self.args = args
-        self.Qsa = {}  # stores Q values for s,a (as defined in the paper)
-        self.Nsa = {}  # stores #times edge s,a was visited
-        self.Ns = {}  # stores #times board s was visited
+#     def __init__(self, game, nnet, args):
+#         self.game = game
+#         self.nnet = nnet
+#         self.args = args
+#         self.Qsa = {}  # stores Q values for s,a (as defined in the paper)
+#         self.Nsa = {}  # stores #times edge s,a was visited
+#         self.Ns = {}  # stores #times board s was visited
         
-        self.Ps = {}  # stores initial policy (returned by neural net)
-        self.Vs = {}
+#         self.Ps = {}  # stores initial policy (returned by neural net)
+#         self.Vs = {}
 
-        self.Es = {}  # stores game.getGameEnded ended for board s
-        self.Valids = {}  # stores game.getValidMoves for board s
+#         self.Es = {}  # stores game.getGameEnded ended for board s
+#         self.Valids = {}  # stores game.getValidMoves for board s
  
 
-    def getActionProb(self, canonicalBoard, temp=1):
+#     def getActionProb(self, canonicalBoard, temp=1):
       
-        for i in range(self.args.numMCTSSims):
-            self.search(canonicalBoard)
+#         for i in range(self.args.numMCTSSims):
+#             self.search(canonicalBoard)
 
-        s = self.game.stringRepresentation(canonicalBoard)
-        counts = [self.Nsa[(s, a)] if (s, a) in self.Nsa else 0 for a in range(self.game.getActionSize())]
+#         s = self.game.stringRepresentation(canonicalBoard)
+#         counts = [self.Nsa[(s, a)] if (s, a) in self.Nsa else 0 for a in range(self.game.getActionSize())]
 
-        v = self.Vs[s]
+#         v = self.Vs[s]
 
-        if temp == 0: # yes for pit, no for train
-            bestAs = np.array(np.argwhere(counts == np.max(counts))).flatten()
-            bestA = np.random.choice(bestAs)
-            probs = [0] * len(counts)
-            probs[bestA] = 1
-            return probs
+#         if temp == 0: # yes for pit, no for train
+#             bestAs = np.array(np.argwhere(counts == np.max(counts))).flatten()
+#             bestA = np.random.choice(bestAs)
+#             probs = [0] * len(counts)
+#             probs[bestA] = 1
+#             return probs
 
-        counts = [x ** (1. / temp) for x in counts]
-        counts_sum = float(sum(counts))
-        probs = [x / counts_sum for x in counts]
-        # return probs, v
-        return probs
+#         counts = [x ** (1. / temp) for x in counts]
+#         counts_sum = float(sum(counts))
+#         probs = [x / counts_sum for x in counts]
+#         # return probs, v
+#         return probs
 
  
 
-    def search(self, canonicalBoard): 
+#     def search(self, canonicalBoard): 
 
-        s = self.game.stringRepresentation(canonicalBoard)
+#         s = self.game.stringRepresentation(canonicalBoard)
 
-        if s not in self.Es:
-            self.Es[s] = self.game.getGameEnded(canonicalBoard, 1)
+#         if s not in self.Es:
+#             self.Es[s] = self.game.getGameEnded(canonicalBoard, 1)
 
-        if self.Es[s] != 0: # if ended.
-            # terminal node
-            return -self.Es[s] # end results of game: 1, -1, 1e-4.
+#         if self.Es[s] != 0: # if ended.
+#             # terminal node
+#             return -self.Es[s] # end results of game: 1, -1, 1e-4.
 
-        if s not in self.Ps:
+#         if s not in self.Ps:
 
-            # # leaf node
-            # # self.Ps[s]: 1d array, probability over all actions.
-            self.Ps[s], v = self.nnet.predict(canonicalBoard)          
-            self.Vs[s] = v
+#             # # leaf node
+#             # # self.Ps[s]: 1d array, probability over all actions.
+#             self.Ps[s], v = self.nnet.predict(canonicalBoard)          
+#             self.Vs[s] = v
 
-            # self.Ps[s], v = np.zeros(65), 0.5
+#             # self.Ps[s], v = np.zeros(65), 0.5
 
-            # a list of 0 and 1.
-            valids = self.game.getValidMoves(canonicalBoard, 1)
+#             # a list of 0 and 1.
+#             valids = self.game.getValidMoves(canonicalBoard, 1)
 
-            # self.Ps[s] = self.Ps[s] * valids  # masking invalid moves
+#             # self.Ps[s] = self.Ps[s] * valids  # masking invalid moves
 
-            # sum_Ps_s = np.sum(self.Ps[s])
-            # if sum_Ps_s > 0:
-            #     self.Ps[s] /= sum_Ps_s  # renormalize
-            # else:
-            #     # if all valid moves were masked make all valid moves equally probable
-            #     self.Ps[s] = self.Ps[s] + valids
-            #     self.Ps[s] /= np.sum(self.Ps[s])
+#             # sum_Ps_s = np.sum(self.Ps[s])
+#             # if sum_Ps_s > 0:
+#             #     self.Ps[s] /= sum_Ps_s  # renormalize
+#             # else:
+#             #     # if all valid moves were masked make all valid moves equally probable
+#             #     self.Ps[s] = self.Ps[s] + valids
+#             #     self.Ps[s] /= np.sum(self.Ps[s])
 
-            self.Valids[s] = valids
-            self.Ns[s] = 0
-            return -v
+#             self.Valids[s] = valids
+#             self.Ns[s] = 0
+#             return -v
 
-        valids = self.Valids[s]
-        cur_best = -float('inf')
-        best_act = -1
+#         valids = self.Valids[s]
+#         cur_best = -float('inf')
+#         best_act = -1
 
-        # pick the action with the highest upper confidence bound
-        for a in range(self.game.getActionSize()):
-            if valids[a]:
-                if (s, a) in self.Qsa:
-                    # 1st term "self.Qsa[(s, a)]": encourage exploitation.
-                    # 2nd term "(...) / (1 + self.Nsa[(s, a)])": encourage exploration.
-                    u = self.Qsa[(s, a)] + self.args.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s]) / (
-                            1 + self.Nsa[(s, a)])
-                else:
-                    u = self.args.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s] + EPS)  # Q = 0 ?
+#         # pick the action with the highest upper confidence bound
+#         for a in range(self.game.getActionSize()):
+#             if valids[a]:
+#                 if (s, a) in self.Qsa:
+#                     # 1st term "self.Qsa[(s, a)]": encourage exploitation.
+#                     # 2nd term "(...) / (1 + self.Nsa[(s, a)])": encourage exploration.
+#                     u = self.Qsa[(s, a)] + self.args.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s]) / (
+#                             1 + self.Nsa[(s, a)])
+#                 else:
+#                     u = self.args.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s] + EPS)  # Q = 0 ?
 
-                if u > cur_best:
-                    cur_best = u
-                    best_act = a
+#                 if u > cur_best:
+#                     cur_best = u
+#                     best_act = a
 
-        a = best_act
+#         a = best_act
 
-        # always get next state as player 1 (canonical).
-        next_s, next_player = self.game.getNextState(canonicalBoard, 1, a)
+#         # always get next state as player 1 (canonical).
+#         next_s, next_player = self.game.getNextState(canonicalBoard, 1, a)
 
-        next_s = self.game.getCanonicalForm(next_s, next_player)
+#         next_s = self.game.getCanonicalForm(next_s, next_player)
 
-        v = self.search(next_s)
+#         v = self.search(next_s)
 
-        if (s, a) in self.Qsa:
-            # avg of all self.Nsa[(s, a)] + 1 Qsa's.
-            self.Qsa[(s, a)] = (self.Nsa[(s, a)] * self.Qsa[(s, a)] + v) / (self.Nsa[(s, a)] + 1)
-            self.Nsa[(s, a)] += 1
-        else:
-            self.Qsa[(s, a)] = v
-            self.Nsa[(s, a)] = 1
+#         if (s, a) in self.Qsa:
+#             # avg of all self.Nsa[(s, a)] + 1 Qsa's.
+#             self.Qsa[(s, a)] = (self.Nsa[(s, a)] * self.Qsa[(s, a)] + v) / (self.Nsa[(s, a)] + 1)
+#             self.Nsa[(s, a)] += 1
+#         else:
+#             self.Qsa[(s, a)] = v
+#             self.Nsa[(s, a)] = 1
 
-        self.Ns[s] += 1
-        return -v
+#         self.Ns[s] += 1
+#         return -v
 
  
 
@@ -962,7 +932,7 @@ class Coach():
         self.nnet = nnet
         self.pnet = self.nnet.__class__(self.game)  # the competitor network
         self.args = args
-        self.mcts = MCTS(self.game, self.nnet, self.args)
+        # self.mcts = MCTS(self.game, self.nnet, self.args)
         self.trainExamplesHistory = []  # history of examples from args.numItersForTrainExamplesHistory latest iterations
         self.skipFirstSelfPlay = False  # can be overriden in loadTrainExamples()
 
@@ -978,36 +948,27 @@ class Coach():
 
         canonicalBoard = self.game.getCanonicalForm(board, self.curPlayer)
 
-        while True:
+        while True: 
 
-            episodeStep += 1
-            
-            # canonicalBoard = self.game.getCanonicalForm(board, self.curPlayer)
+            episodeStep += 1 
 
-            # temp = int(episodeStep < self.args.tempThreshold)
-            # pi, v = self.mcts.getActionProb(canonicalBoard, temp=temp)
-            
-
-            q = self.nnet.predict(canonicalBoard) # all are valid actions
-            pi = self.nnet.toProb(q)
+            qa = self.nnet.predict(canonicalBoard) # all are valid actions
+            qa = np.array([-np.inf if qa[i] is None else qa[i] for i in range(len(qa))])            
+            pi = self.nnet.toProb(qa) # invalid actions have 0 prob.
             
             if np.random.rand() < epsilon:
-                a = np.random.choice(len(pi), p=pi)  # Select a random action
+                a = np.random.choice(len(pi), p=pi)   
             else: 
                 a = np.argmax(pi) 
-
-            # pi = np.zeros(len(pi))    
-            # pi[a] = 1.0
-             
- 
-            # trainExamples[self.curPlayer].append([canonicalBoard, pi, v])
-            
- 
+  
             nextBoard, nextPlayer = self.game.getNextState(board, self.curPlayer, a)
             r = self.game.getGameEnded(nextBoard, nextPlayer)
+
             nextCanonicalBoard = self.game.getCanonicalForm(nextBoard, nextPlayer)
 
-            trainExamples[self.curPlayer].append([canonicalBoard, a, nextCanonicalBoard])
+            # print(f'qa[a]: {qa[a]}')
+
+            trainExamples[self.curPlayer].append([canonicalBoard, qa[a], a, nextCanonicalBoard])
             
             self.curPlayer = nextPlayer
             board = nextBoard
@@ -1025,52 +986,28 @@ class Coach():
                     for x in reversed(trainExamples[player]):
                         
                         s = x[0]
-                        a = x[1]
-                        s_next = x[2]
-                    
-                        examples.append((s, a, reward, s_next)) 
+                        q = x[1]
+                        a = x[2]
+                        s_next = x[3]
+                        qa_next = self.nnet.predict(s_next)
+                        qa_next = np.array([i if i is not None for i in qa_next])  
+                        q_tar = max(-qa_next) # opponent's lose is our gain.
 
-                        # max(-q_next): the worse the opponent, the better i am.
-                        q_next = self.nnet.predict(s_next) 
-                        tdLoss = (reward + gamma * max(-q_next) - qa)**2 
-                        priorities.append(tdLoss)
+                        # data augmentation
+                        sym = self.game.getSymmetries(s, a, s_next)
+                        for s, a, s_next in sym: 
+                            examples.append((s, a, reward, s_next)) 
 
-                        # # data augmentation
-                        # sym = self.game.getSymmetries(s, a)
-                        # for b, p in sym: 
-                        #     examples.append((b, p, target)) 
-                        #     priorities.append(priority) 
-                       
+                            print(f'reward: {reward}, q_tar: {q_tar}, q: {q}')
+
+                            tdLoss = (reward + gamma * q_tar - q)**2 
+                            
+                            priorities.append(tdLoss)  
+
                         reward = gamma * reward
 
                 return examples, priorities
-
-
-            # if r != 0:  
-            #     examples = []
-            #     priorities = []
-            #     for player in trainExamples:
-                    
-            #         gamma = 0.99
-            #         target = r * ((-1) ** (player != self.curPlayer))
-
-            #         for x in reversed(trainExamples[player]):
-                        
-            #             canonicalBoard = x[0]
-            #             pi = x[1]
-            #             v_pred = x[2]
-
-            #             priority = (v_pred - target)**2 
-                 
-            #             # data augmentation
-            #             sym = self.game.getSymmetries(canonicalBoard, pi)
-            #             for b, p in sym: 
-            #                 examples.append((b, p, target)) 
-            #                 priorities.append(priority) 
-                       
-            #             target = gamma * target
-            #     return examples, priorities
-              
+ 
 
     def learn(self): 
 
@@ -1089,32 +1026,19 @@ class Coach():
                 priorities += p 
 
             self.perBuf.addExamples(priorities, examples)
-         
-            # loss = self.nnet.train(self.perBuf)
-
-            # print(f'#### iter: {i}, loss: {loss} ####') 
-
-            # if (i % save_every_n_iter == 0):
-            #     self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=f'iter5-{i}.pth.tar')  
-            
+          
             
             self.nnet.save_checkpoint(folder=self.args.checkpoint, filename='temp.pth.tar')
             self.pnet.load_checkpoint(folder=self.args.checkpoint, filename='temp.pth.tar')
-            # pmcts = MCTS(self.game, self.pnet, self.args)
-
+           
             print('training...')
             loss = self.nnet.train(self.perBuf)
             print(f'loss: {loss}') 
-            # nmcts = MCTS(self.game, self.nnet, self.args)
-
-
-            print('pitting with old model...')
-            # arena = Arena(lambda x: np.argmax(pmcts.getActionProb(x, temp=0)),
-            #               lambda x: np.argmax(nmcts.getActionProb(x, temp=0)), self.game)
+          
+            print('pitting with old model...') 
             arena = Arena(lambda x: self.nnet.act(x),
                           lambda x: self.pnet.act(x), self.game)
-
-            
+ 
 
             pwins, nwins, draws = arena.playGames(self.args.arenaCompare)
  
@@ -1183,57 +1107,57 @@ train()
 
 
 
-class HumanTicTacToePlayer():
-    def __init__(self, game, n):
-        self.game = game
-        self.n = n
+# class HumanTicTacToePlayer():
+#     def __init__(self, game, n):
+#         self.game = game
+#         self.n = n
 
-    def play(self, board):
-        boardvalues = np.arange(self.n*self.n*self.n).reshape(self.n,self.n,self.n)
-        validvalue = np.arange(self.n*self.n*self.n)
-        # display(board)
-        valid = self.game.getValidMoves(board, 1)
-        for i in range(len(valid)):
-            if valid[i] == 1:
-                action = validvalue[i]
-                # print(np.argwhere(boardvalues == action))
+#     def play(self, board):
+#         boardvalues = np.arange(self.n*self.n*self.n).reshape(self.n,self.n,self.n)
+#         validvalue = np.arange(self.n*self.n*self.n)
+#         # display(board)
+#         valid = self.game.getValidMoves(board, 1)
+#         for i in range(len(valid)):
+#             if valid[i] == 1:
+#                 action = validvalue[i]
+#                 # print(np.argwhere(boardvalues == action))
 
-        while True:  
-            a = input()  
-            z,x,y = [int(x) for x in a.split(' ')]
-            boardvalues = np.arange(self.n*self.n*self.n).reshape(self.n,self.n,self.n)
-            a = boardvalues[z][x][y]
-            if valid[a]:
-                break
-            else:
-                print('Invalid')
+#         while True:  
+#             a = input()  
+#             z,x,y = [int(x) for x in a.split(' ')]
+#             boardvalues = np.arange(self.n*self.n*self.n).reshape(self.n,self.n,self.n)
+#             a = boardvalues[z][x][y]
+#             if valid[a]:
+#                 break
+#             else:
+#                 print('Invalid')
 
-        return a
+#         return a
 
 
-def evaluate():
+# def evaluate():
 
-    human_vs_cpu = True
+#     human_vs_cpu = True
 
     
-    g = TicTacToeGame(4)
+#     g = TicTacToeGame(4)
  
-    hp = HumanTicTacToePlayer(g, 4).play
+#     hp = HumanTicTacToePlayer(g, 4).play
 
-    # nnet players
-    n1 = NNetWrapper(g)
-    n1.load_checkpoint('./temp', 'iter5-710.h5')
-    args1 = dotdict({'numMCTSSims': 50, 'cpuct':1.0})
+#     # nnet players
+#     n1 = NNetWrapper(g)
+#     n1.load_checkpoint('./temp', 'iter5-710.h5')
+#     args1 = dotdict({'numMCTSSims': 50, 'cpuct':1.0})
  
-    mcts1 = MCTS(g, n1, args1) 
+#     mcts1 = MCTS(g, n1, args1) 
 
-    n1p = lambda x: np.argmax(mcts1.getActionProb(x, temp=0))
+#     n1p = lambda x: np.argmax(mcts1.getActionProb(x, temp=0))
  
-    player2 = hp
+#     player2 = hp
    
-    arena = Arena(n1p, player2, g, display=TicTacToeGame.display)
+#     arena = Arena(n1p, player2, g, display=TicTacToeGame.display)
 
-    print(arena.playGames(2, verbose=True))
+#     print(arena.playGames(2, verbose=True))
 
 # evaluate()
 
