@@ -15,10 +15,13 @@ import tensorflow as tf
 
 EPS = 1e-8
 
-numEps = 100 #50
+numEps = 50 #50
 batch_size = 64
-perBuf_size = 2**20
-epochs = 10
+perBuf_size = 2**17 #2**18
+epochs = 5
+arenaCompare = 16
+epsilon = 0.2
+gamma = 0.99
 # save_every_n_iter = 1
 
 class dotdict(dict):
@@ -122,9 +125,11 @@ class TicTacToeNNet(tf.keras.Model):
         self.fc2 = tf.keras.layers.Dense(512)  
 
  
-        self.fc_a = tf.keras.layers.Dense(self.action_size, activation='softmax', name='pi') 
+        # self.fc_a = tf.keras.layers.Dense(self.action_size, activation='softmax', name='pi') 
 
-        self.fc_v = tf.keras.layers.Dense(1, activation='tanh', name='v') 
+        self.fc_a = tf.keras.layers.Dense(self.action_size) 
+
+        # self.fc_v = tf.keras.layers.Dense(1, activation='tanh', name='v') 
         
     
 
@@ -150,31 +155,56 @@ class TicTacToeNNet(tf.keras.Model):
         x = self.act2(x)
         x = self.dropout2(x)
 
-        prob_a = self.fc_a(x)
-        v = self.fc_v(x)
+        qa = self.fc_a(x)
+        # v = self.fc_v(x)
 
-        return prob_a, v
+        # return prob_a, v
+        return qa
  
+
+    # @tf.function
+    # def train_step(self, data, learning_weights): 
+
+    #     # x: [bz, 4, 4, 4], a_prob: [bz, 65], v: [bz,]        
+    #     x, a_prob, v = data 
+
+    #     with tf.GradientTape() as tape:
+            
+    #         a_prob_pred, v_pred = self(x)
+
+
+    #         a_loss = tf.keras.losses.categorical_crossentropy(a_prob, a_prob_pred)
+    #         td_loss = tf.keras.metrics.mean_squared_error(v, v_pred)
+    #         total_loss = (a_loss + td_loss) * learning_weights
+
+    #         gradients = tape.gradient(total_loss, self.trainable_variables) 
+    #         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+
+    #     return total_loss, td_loss
+            
+
+
 
     @tf.function
     def train_step(self, data, learning_weights): 
-
-        # x: [bz, 4, 4, 4], a_prob: [bz, 65], v: [bz,]        
-        x, a_prob, v = data 
+      
+        s, a, r, q_tar = data 
 
         with tf.GradientTape() as tape:
             
-            a_prob_pred, v_pred = self(x)
+            qa = self(s)
 
+            index = tf.stack([tf.range(tf.shape(a)[0]), a], axis=1)
+            q = tf.gather_nd(qa, index)
+             
 
-            a_loss = tf.keras.losses.categorical_crossentropy(a_prob, a_prob_pred)
-            td_loss = tf.keras.metrics.mean_squared_error(v, v_pred)
-            total_loss = (a_loss + td_loss) * learning_weights
-
-            gradients = tape.gradient(total_loss, self.trainable_variables) 
+            td_loss = tf.reduce_mean(tf.square(r + self.args.gamma * q_tar - q))
+            
+            gradients = tape.gradient(td_loss, self.trainable_variables) 
             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
-        return total_loss, td_loss
+        return td_loss
+        # return total_loss, td_loss
             
 
 
@@ -186,6 +216,7 @@ class NNetWrapper():
 
         self.args = dotdict({
             'lr': 0.001,
+            'gamma': gamma
             'dropout': 0.3,
             'epochs': epochs,
             'batch_size': batch_size,
@@ -193,18 +224,50 @@ class NNetWrapper():
             'num_channels': 256,
         }) 
 
+        self.game = game
+
         self.model = TicTacToeNNet(game, self.args)
 
         self.board_z, self.board_x, self.board_y = game.getBoardSize()
         self.action_size = game.getActionSize()
 
-  
+    
+
+    # def train(self, perBuf):   
+        
+    #     batch_size = self.args.batch_size
+ 
+    #     train_losses = []
+        
+
+    #     for epoch in range(self.args.epochs): 
+
+    #         n = int(perBuf.getExampleNum() / batch_size)
+    #         # print(f'self.args.epochs: {self.args.epochs}, n: {n}')
+    #         for i in range(n):
+
+    #             examples, learning_weights = perBuf.getTopPriorityExamples(batch_size)
+                
+    #             b, pis, vs = list(zip(*examples))
+
+    #             b = tf.convert_to_tensor(b, dtype=tf.float32)
+    #             pis = tf.convert_to_tensor(pis, dtype=tf.float32)
+    #             vs = tf.convert_to_tensor(vs, dtype=tf.float32)
+    
+    #             total_loss, td_losses = self.model.train_step((b, pis, vs), learning_weights)
+    #             train_losses.append(np.mean(total_loss.numpy()))             
+    #             perBuf.updatePriorities(td_losses.numpy())
+       
+    #     # print(f"avg_train_loss: {np.mean(train_losses)}")
+    #     return np.mean(train_losses)
+
+
 
     def train(self, perBuf):   
         
         batch_size = self.args.batch_size
  
-        train_losses = []
+        td_losses_all = []
         
 
         for epoch in range(self.args.epochs): 
@@ -215,33 +278,88 @@ class NNetWrapper():
 
                 examples, learning_weights = perBuf.getTopPriorityExamples(batch_size)
                 
-                b, pis, vs = list(zip(*examples))
+                s, a, r, s_next = list(zip(*examples))
 
-                b = tf.convert_to_tensor(b, dtype=tf.float32)
-                pis = tf.convert_to_tensor(pis, dtype=tf.float32)
-                vs = tf.convert_to_tensor(vs, dtype=tf.float32)
-    
-                total_loss, td_losses = self.model.train_step((b, pis, vs), learning_weights)
-                train_losses.append(np.mean(total_loss.numpy()))             
+                s = tf.convert_to_tensor(s, dtype=tf.float32)
+                a = tf.convert_to_tensor(a, dtype=tf.float32)
+                r = tf.convert_to_tensor(r, dtype=tf.float32)
+                s_next = tf.convert_to_tensor(s_next, dtype=tf.float32)
+                q_tar = self.model.maxQ(s_next)
+
+                td_losses = self.model.train_step((s, a, r, q_tar), learning_weights)
+                td_losses_all.append(np.mean(td_losses.numpy()))             
                 perBuf.updatePriorities(td_losses.numpy())
-       
-        # print(f"avg_train_loss: {np.mean(train_losses)}")
-        return np.mean(train_losses)
+        
+        return np.mean(td_losses_all)
 
 
+    # def predict(self, canonicalBoard): 
 
-    def predict(self, board): 
+    #     board = canonicalBoard[np.newaxis, :, :] 
+    #     board = tf.convert_to_tensor(board, dtype=tf.float32)
+    #     # print(f'########## board.shape: {board.shape}')
+    #     pi, v = self.model(board) 
+        
+    #     K.clear_session()
+    #     tf.keras.backend.clear_session() 
 
-        board = board[np.newaxis, :, :] 
+    #     pi = pi[0].numpy()
+    #     v = v[0].numpy()[0]
+ 
+
+    #     valids = self.game.getValidMoves(canonicalBoard, 1) 
+        
+    #     pi = pi * valids
+
+    #     sum_Ps_s = np.sum(pi)
+    #     if sum_Ps_s > 0:
+    #         pi /= sum_Ps_s   
+    #     else: 
+    #         pi = pi + valids
+    #         pi /= np.sum(pi)         
+
+    #     return pi, v
+
+
+    def predict(self, canonicalBoard): 
+
+        board = canonicalBoard[np.newaxis, :, :] 
         board = tf.convert_to_tensor(board, dtype=tf.float32)
         # print(f'########## board.shape: {board.shape}')
-        pi, v = self.model(board) 
-         
+        qa = self.model(board) 
+        
         K.clear_session()
         tf.keras.backend.clear_session() 
-        return pi[0].numpy(), v[0].numpy()
 
- 
+        qa = qa[0].numpy()
+  
+
+        valids = self.game.getValidMoves(canonicalBoard, 1) 
+        # valids = np.array([1 if v else -np.inf for v in valids])
+        qa = np.array([qa[i] if valids[i] else -np.inf for i in range(len(valids))])
+
+        # qa = qa * valids
+
+        # sum_Ps_s = np.sum(qa)
+        # if sum_Ps_s > 0:
+        #     pi /= sum_Ps_s   
+        # else: 
+        #     pi = pi + valids
+        #     pi /= np.sum(pi)         
+
+        return qa
+
+    def toProb(self, qa):
+
+        return np.exp(qa) / np.sum(np.exp(qa), axis=0)
+
+    def act(self, canonicalBoard):
+        
+        pi = self.predict(canonicalBoard)[0]
+
+        action = np.random.choice(len(pi), p=pi)
+
+        return action
 
     def save_checkpoint(self, folder='checkpoint', filename='checkpoint.pth.tar'):
         
@@ -689,22 +807,22 @@ class MCTS():
             # # leaf node
             # # self.Ps[s]: 1d array, probability over all actions.
             self.Ps[s], v = self.nnet.predict(canonicalBoard)          
-            self.Vs[s] = v[0]
+            self.Vs[s] = v
 
             # self.Ps[s], v = np.zeros(65), 0.5
 
             # a list of 0 and 1.
             valids = self.game.getValidMoves(canonicalBoard, 1)
 
-            self.Ps[s] = self.Ps[s] * valids  # masking invalid moves
+            # self.Ps[s] = self.Ps[s] * valids  # masking invalid moves
 
-            sum_Ps_s = np.sum(self.Ps[s])
-            if sum_Ps_s > 0:
-                self.Ps[s] /= sum_Ps_s  # renormalize
-            else:
-                # if all valid moves were masked make all valid moves equally probable
-                self.Ps[s] = self.Ps[s] + valids
-                self.Ps[s] /= np.sum(self.Ps[s])
+            # sum_Ps_s = np.sum(self.Ps[s])
+            # if sum_Ps_s > 0:
+            #     self.Ps[s] /= sum_Ps_s  # renormalize
+            # else:
+            #     # if all valid moves were masked make all valid moves equally probable
+            #     self.Ps[s] = self.Ps[s] + valids
+            #     self.Ps[s] /= np.sum(self.Ps[s])
 
             self.Valids[s] = valids
             self.Ns[s] = 0
@@ -806,7 +924,7 @@ class Arena():
         twoWon = 0
         draws = 0
         for _ in range(num) :
-            # print(f'playGame{_}')
+            print(f'playGame{_}')
             gameResult = self.playGame(verbose=verbose)
             if gameResult == 1:
                 oneWon += 1
@@ -818,7 +936,7 @@ class Arena():
         self.player1, self.player2 = self.player2, self.player1
 
         for _ in range(num):
-            # print(f'playGame{num+_}')
+            print(f'playGame{num+_}')
             gameResult = self.playGame(verbose=verbose)
             if gameResult == -1:
                 oneWon += 1
@@ -858,68 +976,100 @@ class Coach():
         self.curPlayer = 1
         episodeStep = 0 
 
+        canonicalBoard = self.game.getCanonicalForm(board, self.curPlayer)
+
         while True:
 
             episodeStep += 1
             
-            canonicalBoard = self.game.getCanonicalForm(board, self.curPlayer)
+            # canonicalBoard = self.game.getCanonicalForm(board, self.curPlayer)
 
             # temp = int(episodeStep < self.args.tempThreshold)
             # pi, v = self.mcts.getActionProb(canonicalBoard, temp=temp)
             
 
-            pi, v = self.nnet.predict(canonicalBoard)
-            v = v[0]
-            valids = self.game.getValidMoves(canonicalBoard, 1) 
-            pi = pi * valids
-
-            sum_Ps_s = np.sum(pi)
-            if sum_Ps_s > 0:
-                pi /= sum_Ps_s   
-            else: 
-                pi = pi + valids
-                pi /= np.sum(pi) 
-                 
-            if episodeStep > self.args.tempThreshold: # deterministic
-                idx = np.argmax(pi)
-                pi = np.zeros(len(pi))    
-                pi[idx] = 1.0
-
- 
-                
-            # trainExamples[self.curPlayer].append([canonicalBoard, pi, v[0]])
-            trainExamples[self.curPlayer].append([canonicalBoard, pi, v])
-
-            action = np.random.choice(len(pi), p=pi)
-            board, self.curPlayer = self.game.getNextState(board, self.curPlayer, action)
-
-            r = self.game.getGameEnded(board, self.curPlayer)
-
+            q = self.nnet.predict(canonicalBoard) # all are valid actions
+            pi = self.nnet.toProb(q)
             
+            if np.random.rand() < epsilon:
+                a = np.random.choice(len(pi), p=pi)  # Select a random action
+            else: 
+                a = np.argmax(pi) 
+
+            # pi = np.zeros(len(pi))    
+            # pi[a] = 1.0
+             
+ 
+            # trainExamples[self.curPlayer].append([canonicalBoard, pi, v])
+            
+ 
+            nextBoard, nextPlayer = self.game.getNextState(board, self.curPlayer, a)
+            r = self.game.getGameEnded(nextBoard, nextPlayer)
+            nextCanonicalBoard = self.game.getCanonicalForm(nextBoard, nextPlayer)
+
+            trainExamples[self.curPlayer].append([canonicalBoard, a, nextCanonicalBoard])
+            
+            self.curPlayer = nextPlayer
+            board = nextBoard
+            canonicalBoard = nextCanonicalBoard
+
+
             if r != 0:  
                 examples = []
                 priorities = []
                 for player in trainExamples:
                     
-                    gamma = 0.9
-                    target = r * ((-1) ** (player != self.curPlayer))
+                    gamma = self.nnet.args.gamma
+                    reward = r * ((-1) ** (player != self.curPlayer))
 
                     for x in reversed(trainExamples[player]):
                         
-                        canonicalBoard = x[0]
-                        pi = x[1]
-                        v_pred = x[2]
+                        s = x[0]
+                        a = x[1]
+                        s_next = x[2]
+                    
+                        examples.append((s, a, reward, s_next)) 
 
-                        priority = (v_pred - target)**2 
-                 
-                        # data augmentation
-                        sym = self.game.getSymmetries(canonicalBoard, pi)
-                        for b, p in sym: 
-                            examples.append((b, p, target)) 
-                            priorities.append(priority) 
+                        # max(-q_next): the worse the opponent, the better i am.
+                        q_next = self.nnet.predict(s_next) 
+                        tdLoss = (reward + gamma * max(-q_next) - qa)**2 
+                        priorities.append(tdLoss)
+
+                        # # data augmentation
+                        # sym = self.game.getSymmetries(s, a)
+                        # for b, p in sym: 
+                        #     examples.append((b, p, target)) 
+                        #     priorities.append(priority) 
                        
-                        target = gamma * target
+                        reward = gamma * reward
+
                 return examples, priorities
+
+
+            # if r != 0:  
+            #     examples = []
+            #     priorities = []
+            #     for player in trainExamples:
+                    
+            #         gamma = 0.99
+            #         target = r * ((-1) ** (player != self.curPlayer))
+
+            #         for x in reversed(trainExamples[player]):
+                        
+            #             canonicalBoard = x[0]
+            #             pi = x[1]
+            #             v_pred = x[2]
+
+            #             priority = (v_pred - target)**2 
+                 
+            #             # data augmentation
+            #             sym = self.game.getSymmetries(canonicalBoard, pi)
+            #             for b, p in sym: 
+            #                 examples.append((b, p, target)) 
+            #                 priorities.append(priority) 
+                       
+            #             target = gamma * target
+            #     return examples, priorities
               
 
     def learn(self): 
@@ -950,17 +1100,22 @@ class Coach():
             
             self.nnet.save_checkpoint(folder=self.args.checkpoint, filename='temp.pth.tar')
             self.pnet.load_checkpoint(folder=self.args.checkpoint, filename='temp.pth.tar')
-            pmcts = MCTS(self.game, self.pnet, self.args)
+            # pmcts = MCTS(self.game, self.pnet, self.args)
 
             print('training...')
             loss = self.nnet.train(self.perBuf)
             print(f'loss: {loss}') 
-            nmcts = MCTS(self.game, self.nnet, self.args)
+            # nmcts = MCTS(self.game, self.nnet, self.args)
 
 
             print('pitting with old model...')
-            arena = Arena(lambda x: np.argmax(pmcts.getActionProb(x, temp=0)),
-                          lambda x: np.argmax(nmcts.getActionProb(x, temp=0)), self.game)
+            # arena = Arena(lambda x: np.argmax(pmcts.getActionProb(x, temp=0)),
+            #               lambda x: np.argmax(nmcts.getActionProb(x, temp=0)), self.game)
+            arena = Arena(lambda x: self.nnet.act(x),
+                          lambda x: self.pnet.act(x), self.game)
+
+            
+
             pwins, nwins, draws = arena.playGames(self.args.arenaCompare)
  
             print(f'win rate: {float(nwins) / (pwins + nwins)}')
@@ -993,7 +1148,7 @@ def train():
     nnet = NNetWrapper(game)
     
 
-    nnet.load_checkpoint('temp', 'iter5-710.h5')
+    # nnet.load_checkpoint('temp', 'checkpoint_22.h5')
 
     args = dotdict({
         'numIters': 100000,
@@ -1001,7 +1156,7 @@ def train():
         'tempThreshold': 10,  
         
         'updateThreshold': 0.6,
-        'arenaCompare': 10,
+        'arenaCompare': arenaCompare,
 
         'numMCTSSims': 25,         
         'cpuct': 1,
