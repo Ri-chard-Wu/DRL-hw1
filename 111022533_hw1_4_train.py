@@ -640,29 +640,6 @@ class TicTacToeGame():
         return player*board
 
 
-    # def getSymmetries(self, board, pi):
-    #     # mirror, rotational
-    #     pi_board = np.reshape(pi, (self.n, self.n, self.n))
-    #     l = []
-    #     newB = np.reshape(board, (self.n*self.n, self.n))
-    #     newPi = pi_board
-    #     for i in range(1,5):
-
-    #         for z in [True, False]:
-    #             for j in [True, False]:
-    #                 if j:
-    #                     newB = np.fliplr(newB)
-    #                     newPi = np.fliplr(newPi)
-    #                 if z:
-    #                     newB = np.flipud(newB)
-    #                     newPi = np.flipud(newPi)
-                    
-    #                 newB = np.reshape(newB, (self.n,self.n,self.n))
-    #                 newPi = np.reshape(newPi, (self.n,self.n,self.n))
-    #                 l += [(newB, list(newPi.ravel()) + [pi[-1]])]
-    #     return l
-    
-
     def getSymmetries(self, board, a, board_next):
         # mirror, rotational
         pi = np.zeros(self.n*self.n*self.n)
@@ -1096,7 +1073,7 @@ def train():
     nnet = NNetWrapper(game)
     
 
-    nnet.load_checkpoint('temp', 'checkpoint_11.h5')
+    # nnet.load_checkpoint('temp', 'checkpoint_11.h5')
 
     args = dotdict({
         'numIters': 100000,
