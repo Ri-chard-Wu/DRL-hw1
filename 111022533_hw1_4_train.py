@@ -17,10 +17,10 @@ EPS = 1e-8
 
 numEps = 50 #50
 batch_size = 64
-perBuf_size = 2**16 #2**16
+perBuf_size = 2**17 #2**16
 epochs = 5 # 5
 arenaCompare = 16 # 16
-epsilon = 0.2
+epsilon = 0.4
 gamma = 0.99
 # save_every_n_iter = 1
 
@@ -184,10 +184,10 @@ class TicTacToeNNet(tf.keras.Model):
             # td_loss = tf.keras.metrics.mean_squared_error(r + self.args.gamma * q_tar, q)
 
             td_losses = tf.square(r + self.args.gamma * q_tar - q)
-            td_loss = tf.reduce_mean(td_losses)
+            td_loss = tf.reduce_mean(td_losses * learning_weights)
             
-            gradients = tape.gradient(td_loss, self.trainable_variables) 
-            self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+        gradients = tape.gradient(td_loss, self.trainable_variables) 
+        self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
         return td_losses
         # return total_loss, td_loss
@@ -226,25 +226,37 @@ class NNetWrapper():
         td_losses_all = []
         
 
-        for epoch in range(self.args.epochs): 
+        for epoch in range(self.args.epochs):  
 
             n = int(perBuf.getExampleNum() / batch_size) 
             for i in range(n):
 
+                # print(f'epoch: {epoch}, n: {i} / {n}')
+
                 examples, learning_weights = perBuf.getTopPriorityExamples(batch_size)
                 
-                s, a, r, s_next = list(zip(*examples))
+                s, a, r, s_next, valids = list(zip(*examples))
 
                 q_tar = []   
-                s_next = tf.convert_to_tensor(s_next, dtype=tf.float32) 
-                qa = self.model(s_next).numpy()   
-                K.clear_session()
-                tf.keras.backend.clear_session()                  
-                for i, _s in enumerate(s_next):
-                    valids = self.game.getValidMoves(_s, 1) 
-                    tmp = np.array([qa[i][j] if valids[j] else np.inf for j in range(len(valids))])
-                    q_tar.append(-min(tmp))
- 
+                _s_next = tf.convert_to_tensor(s_next, dtype=tf.float32) 
+                qa = self.model(_s_next).numpy()   
+                 
+                # print(f'max: {np.max(qa)}, min: {np.min(qa)}')
+
+                for b, _s in enumerate(s_next): 
+                    _valids = valids[b]
+                    if(sum(_valids) > 0.5):
+                            
+                        tmp = np.array([qa[b][j] if _valids[j] else np.inf \
+                                                        for j in range(len(_valids))])
+
+                        _q_tar = -min(tmp)
+                        assert(not np.isinf(_q_tar))
+                        q_tar.append(_q_tar) 
+                    else: # terminal state
+                        q_tar.append(0.0)
+                
+                # print(f'q_tar: {q_tar}')
 
                 s = tf.convert_to_tensor(s, dtype=tf.float32)
                 a = tf.convert_to_tensor(a, dtype=tf.int32)
@@ -255,6 +267,9 @@ class NNetWrapper():
                 td_losses_all.append(np.mean(td_losses.numpy()))             
                 perBuf.updatePriorities(td_losses.numpy())
         
+        K.clear_session()
+        tf.keras.backend.clear_session() 
+
         return np.mean(td_losses_all)
 
 
@@ -732,7 +747,7 @@ class TicTacToeGame():
 #         self.Ns = {}  # stores #times board s was visited
         
 #         self.Ps = {}  # stores initial policy (returned by neural net)
-#         self.Vs = {}
+        
 
 #         self.Es = {}  # stores game.getGameEnded ended for board s
 #         self.Valids = {}  # stores game.getValidMoves for board s
@@ -746,7 +761,7 @@ class TicTacToeGame():
 #         s = self.game.stringRepresentation(canonicalBoard)
 #         counts = [self.Nsa[(s, a)] if (s, a) in self.Nsa else 0 for a in range(self.game.getActionSize())]
 
-#         v = self.Vs[s]
+        
 
 #         if temp == 0: # yes for pit, no for train
 #             bestAs = np.array(np.argwhere(counts == np.max(counts))).flatten()
@@ -779,7 +794,7 @@ class TicTacToeGame():
 #             # # leaf node
 #             # # self.Ps[s]: 1d array, probability over all actions.
 #             self.Ps[s], v = self.nnet.predict(canonicalBoard)          
-#             self.Vs[s] = v
+        
 
 #             # self.Ps[s], v = np.zeros(65), 0.5
 
@@ -935,7 +950,6 @@ class Coach():
         self.pnet = self.nnet.__class__(self.game)  # the competitor network
         self.args = args
         # self.mcts = MCTS(self.game, self.nnet, self.args)
-        self.trainExamplesHistory = []  # history of examples from args.numItersForTrainExamplesHistory latest iterations
         self.skipFirstSelfPlay = False  # can be overriden in loadTrainExamples()
 
         self.perBuf = perBuf
@@ -968,7 +982,7 @@ class Coach():
 
             nextCanonicalBoard = self.game.getCanonicalForm(nextBoard, nextPlayer)
 
-            trainExamples[self.curPlayer].append([canonicalBoard, qa[a], a, nextCanonicalBoard])
+            trainExamples[self.curPlayer].append([canonicalBoard, qa[a], a, nextCanonicalBoard, r])
             
             self.curPlayer = nextPlayer
             board = nextBoard
@@ -989,20 +1003,33 @@ class Coach():
                         q = x[1]
                         a = x[2]
                         s_next = x[3]
-                        qa_next = self.nnet.predict(s_next) 
+                        end = x[4]
+                         
 
-                        # opponent's lose is our gain.
-                        q_tar = -min(np.array([np.inf if q is None else q for q in qa_next])) 
+                        if(end != 0): # s_next is an end state.
+                            q_tar = 0
+                        else:
+                            # opponent's lose is our gain.
+                            qa_next = self.nnet.predict(s_next)
+                            q_tar = -min(np.array([np.inf if q is None else q for q in qa_next])) 
+
                         
+                        assert(not np.isinf(q_tar))
+
                         # data augmentation
                         sym = self.game.getSymmetries(s, a, s_next)
                         for s, a, s_next in sym: 
-                            examples.append((s, a, reward, s_next))  
+                            valids = self.game.getValidMoves(s_next, 1)  
+                            examples.append((s, a, reward, s_next, valids))  
                             tdLoss = (reward + gamma * q_tar - q)**2  
                             priorities.append(tdLoss)  
 
                         reward = gamma * reward
 
+                idx = [i for i in range(len(examples))]
+                shuffle(idx)
+                examples = [examples[i] for i in idx]
+                priorities = [priorities[i] for i in idx]
                 return examples, priorities
  
 
@@ -1069,14 +1096,14 @@ def train():
     nnet = NNetWrapper(game)
     
 
-    # nnet.load_checkpoint('temp', 'checkpoint_22.h5')
+    nnet.load_checkpoint('temp', 'checkpoint_11.h5')
 
     args = dotdict({
         'numIters': 100000,
         'numEps': numEps,       
         'tempThreshold': 10,  
         
-        'updateThreshold': 0.6,
+        'updateThreshold': 0.5,
         'arenaCompare': arenaCompare,
 
         'numMCTSSims': 25,         
