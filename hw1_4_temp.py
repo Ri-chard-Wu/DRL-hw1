@@ -15,16 +15,16 @@ import tensorflow as tf
 
 EPS = 1e-8
 
-numEps = 20 #20
+nEps = 1 #20
 batch_size = 64
-perBuf_size = 2**17 #2**17
-epochs = 5 # 5
+replayBufferLength = 2**16 #2**17
+epochs = 2 # 5
 
-arenaCompare = 16 # 10
-arenaCompareEveryN = 2
+arenaCompare = 2 # 10
+update_every_n = 1 #3
 
-epsilon = 0.2
-gamma = 0.99
+# epsilon = 0.2
+# gamma = 0.99
 # save_every_n_iter = 1
 
 class dotdict(dict):
@@ -366,23 +366,17 @@ class Game():
  
 class Agent(tf.keras.Model):
 
-    def __init__(self):
+    def __init__(self, args):
   
         super(Agent, self).__init__()
 
         self.game = Game(4)
-        # self.action_size = game.getActionSize()
-
-        self.args = dotdict({  
-            'epochs': epochs,
-            'batch_size': batch_size
-        }) 
-
-        self.init_layers()
-        self.optimizer = tf.keras.optimizers.Adam(0.001)
+        self.args = args 
+        self.init_net()
+        
 
 
-    def init_layers(self):
+    def init_net(self):
 
         self.act = {}
         self.bn = {}
@@ -409,7 +403,16 @@ class Agent(tf.keras.Model):
 
         self.fc_a = tf.keras.layers.Dense(Game.ActionSize, activation='softmax')  
         self.fc_v = tf.keras.layers.Dense(1, activation='tanh')         
-        
+       
+
+        self.optimizer = tf.keras.optimizers.Adam(0.001)
+
+    def clear_search_tree(self):
+        self.mcts = MCTS(self, self.args) 
+
+    def predict_mcts(self, canonicalBoard, temp=temp):
+        return self.mcts.getActionProb(canonicalBoard, temp=temp)  
+ 
      
     @tf.function
     def call(self, x, training=None):
@@ -461,9 +464,7 @@ class Agent(tf.keras.Model):
 
         return total_loss
              
-    # def choose_action(self, state):
-
-
+  
     def predict(self, canonicalBoard): 
 
         board = canonicalBoard[np.newaxis, :, :] 
@@ -490,18 +491,15 @@ class Agent(tf.keras.Model):
         return pi, v 
 
 
-    def train(self, examples):   
-        
-        batch_size = self.args.batch_size
- 
-        train_losses = []
+    def train(self, examples, epochs, batch_size):   
          
-        for epoch in range(self.args.epochs): 
+        train_losses = []
+        n = int(len(examples) / batch_size) 
 
-            n = int(len(examples) / batch_size) 
+        for epoch in range(epochs):     
             for i in range(n):
-                _e = examples[i*batch_size:(i+1)*batch_size] 
-                b, pis, vs = list(zip(*_e))
+                batch = examples[i*batch_size:(i+1)*batch_size] 
+                b, pis, vs = list(zip(*batch))
 
                 b = tf.convert_to_tensor(b, dtype=tf.float32)
                 pis = tf.convert_to_tensor(pis, dtype=tf.float32)
@@ -528,8 +526,8 @@ class Agent(tf.keras.Model):
 
 class MCTS():
      
-    def __init__(self, game, agent, args):
-        self.game = game
+    def __init__(self, agen, args):
+        self.game = Game(4)
         self.agent = agent
         self.args = args
         self.Qsa = {}  # stores Q values for s,a (as defined in the paper)
@@ -579,23 +577,9 @@ class MCTS():
             # # leaf node
             # # self.Ps[s]: 1d array, probability over all actions.
             self.Ps[s], v = self.agent.predict(canonicalBoard, to_prob=True)          
-        
-
-            # self.Ps[s], v = np.zeros(65), 0.5
-
-            # a list of 0 and 1.
+         
             valids = self.game.getValidMoves(canonicalBoard, 1)
-
-            # self.Ps[s] = self.Ps[s] * valids  # masking invalid moves
-
-            # sum_Ps_s = np.sum(self.Ps[s])
-            # if sum_Ps_s > 0:
-            #     self.Ps[s] /= sum_Ps_s  # renormalize
-            # else:
-            #     # if all valid moves were masked make all valid moves equally probable
-            #     self.Ps[s] = self.Ps[s] + valids
-            #     self.Ps[s] /= np.sum(self.Ps[s])
-
+  
             self.Valids[s] = valids
             self.Ns[s] = 0
             return -v
@@ -648,9 +632,9 @@ class MCTS():
 
 
 class HumanTicTacToePlayer():
-    def __init__(self, game, n):
-        self.game = game
-        self.n = n
+    def __init__(self):
+        self.game = Game(4)
+        self.n = 4
 
     def play(self, board):
         boardvalues = np.arange(self.n*self.n*self.n).reshape(self.n,self.n,self.n)
@@ -676,8 +660,8 @@ class HumanTicTacToePlayer():
 
 class RandomPlayer():
 
-    def __init__(self, game):
-        self.game = game
+    def __init__(self):
+        self.game = Game(4)
 
     def play(self, board):
         a = np.random.randint(self.game.getActionSize())
@@ -686,15 +670,14 @@ class RandomPlayer():
             a = np.random.randint(self.game.getActionSize())
         return a
  
+
 class Arena(): 
-    def __init__(self, player1, player2, game, display=None):
+    def __init__(self, player1, player2, display=None):
       
         self.player1 = player1
         self.player2 = player2
-        self.game = game
+        self.game = Game(4)
         self.display = display
-
-
 
     def playGame(self, verbose=False):
         
@@ -728,7 +711,6 @@ class Arena():
             self.display(board) 
         return curPlayer * self.game.getGameEnded(board, curPlayer)
 
-
     def playGames(self, num, verbose=False): 
 
         num = int(num / 2)
@@ -760,127 +742,7 @@ class Arena():
                 draws += 1
 
         return oneWon, twoWon, draws
-
-
-
-
-# class Coach(): 
-
-#     def __init__(self, game, agent, args):
-#         self.game = game
-#         self.agent = agent
-#         self.args = args
-#         self.mcts = MCTS(self.game, self.agent, self.args) 
-#         # self.perBuf = perBuf 
-
-
-#     def executeEpisode(self): 
-
-#         trainExamples = []
-#         board = self.game.getInitBoard() # an np array of shape 4x4x4
-#         self.curPlayer = 1
-#         episodeStep = 0
-
-#         while True:
-#             episodeStep += 1
-            
-#             canonicalBoard = self.game.getCanonicalForm(board, self.curPlayer)
-
-#             temp = int(episodeStep < self.args.tempThreshold)
-
-#             pi = self.mcts.getActionProb(canonicalBoard, temp=temp)
-
-#             # data augmentation
-#             sym = self.game.getSymmetries(canonicalBoard, pi)
-#             for b, p in sym:
-#                 trainExamples.append([b, self.curPlayer, p, None])
-
-#             action = np.random.choice(len(pi), p=pi)
-#             board, self.curPlayer = self.game.getNextState(board, self.curPlayer, action)
-
-#             r = self.game.getGameEnded(board, self.curPlayer)
-
-#             if r != 0:
-#                 # (canonicalBoard, pi, v)
-#                 return [(x[0], x[2], r * ((-1) ** (x[1] != self.curPlayer))) for x in trainExamples]
-
-
-
-#     def learn(self): 
-
-#         for i in range(1, self.args.numIters + 1):
-#             # print(f'#### iter: {i} ####')
-
-#             iterationTrainExamples = deque([], maxlen=self.args.maxlenOfQueue)
-
-#             for j in range(self.args.numEps):
-#                 print(f'#### iter: {i}, eps: {j} ####')
-#                 self.mcts = MCTS(self.game, self.agent, self.args)  # reset search tree
-#                 iterationTrainExamples += self.executeEpisode()
-
-#             self.trainExamplesHistory.append(iterationTrainExamples)
-
-
-#             if len(self.trainExamplesHistory) > self.args.numItersForTrainExamplesHistory:                
-#                 self.trainExamplesHistory.pop(0)
-          
-#             self.saveTrainExamples(i - 1)
-
-
-#             trainExamples = []
-#             for e in self.trainExamplesHistory:
-#                 trainExamples.extend(e)
-
-
-#             shuffle(trainExamples)
-  
  
-#             print('training...')
-#             self.agent.train(trainExamples) 
-
-#             if i % arenaCompareEveryN == 0:
-
-#                 print('pitting random model...')
-
-#                 nmcts = MCTS(self.game, self.agent, self.args)
-#                 player1 = lambda x: np.argmax(nmcts.getActionProb(x, temp=0))
-#                 player2 = RandomPlayer(g).play
-#                 arena = Arena(player1, player2, self.game)
-
-#                 pwins, nwins, draws = arena.playGames(self.args.arenaCompare)
-    
-#                 self.agent.save_checkpoint(folder=self.args.checkpoint,
-#                                                     filename=f'temp.pth.tar')        
-           
-
-#     def saveTrainExamples(self, iteration):
-
-#         folder = self.args.checkpoint
-
-#         if not os.path.exists(folder):
-#             os.makedirs(folder)
-        
-#         filename = os.path.join(folder, self.getCheckpointFile(iteration) + ".examples")
-
-#         with open(filename, "wb+") as f:
-#             Pickler(f).dump(self.trainExamplesHistory)
-
-#         f.closed
-
-
-#     def loadTrainExamples(self, path):
-
-#         with open(path, "rb") as f:
-#             self.trainExamplesHistory = Unpickler(f).load()
- 
-#     def getCheckpointFile(self, iteration):
-#         return 'checkpoint_' + str(iteration) + '.pth.tar'
-
-
- 
-
-
-
 
 class ReplayBuffer():
 
@@ -918,29 +780,28 @@ class ReplayBuffer():
         with open(path, "rb") as f:
             self.buf = Unpickler(f).load()
  
-
-
-
+ 
 class Trainer():
 
     def __init__(self, agent, args):
-        self.replayBuf = ReplayBuffer(2**16)
+        
         self.game = Game(4)
         self.agent = agent
         self.args = args
+        self.replayBuf = ReplayBuffer(args.replayBufferLength)
 
-    def collectExamples(self, nEps): 
+    def collectExamples(self): 
 
         examples = []
 
-        for j in range(nEps): 
+        for j in range(self.args.nEps): 
             
-            self.mcts = MCTS(self.game, self.agent, self.args) 
-             
+            self.agent.clear_search_tree()
+
             board = self.game.getInitBoard()  
             self.curPlayer = 1
             t = 0
-            tmpExamples = []
+            epsExamples = []  
 
             while True:
                 t += 1
@@ -948,12 +809,13 @@ class Trainer():
                 canonicalBoard = self.game.getCanonicalForm(board, self.curPlayer)
 
                 temp = int(t < self.args.tempThreshold) 
-                pi = self.mcts.getActionProb(canonicalBoard, temp=temp)
+                               
+                pi = self.agent.predict_mcts(canonicalBoard, temp=temp)
 
                 # data augmentation
                 sym = self.game.getSymmetries(canonicalBoard, pi)
                 for b, p in sym:
-                    tmpExamples.append([b, self.curPlayer, p, None])
+                    epsExamples.append([b, self.curPlayer, p, None])
 
                 action = np.random.choice(len(pi), p=pi)
                 board, self.curPlayer = self.game.getNextState(board, self.curPlayer, action)
@@ -962,73 +824,74 @@ class Trainer():
 
                 if r != 0:
                     # (canonicalBoard, pi, v)
-                    examples.extend([(x[0], x[2], r * ((-1) ** (x[1] != self.curPlayer))) for x in tmpExamples])
+                    examples.extend([(x[0], x[2], r * ((-1) ** (x[1] != self.curPlayer))) for x in epsExamples])
+
+                    break
 
         return examples
         
-
-
-
+ 
 
     def train(self):
 
-        for i in range():
+        for i in range(self.args.nIters):
  
             print('collecting examples...')
-            self.replayBuf.addExamples(self.collectExamples()) 
-            self.replayBuf.save(f'temp/iter-{i}.pth.tar.examples')
+            self.replayBuf.addExamples(self.collectExamples())  
             examples = self.replayBuf.sample()
             
-
             print('training...')
-            self.agent.train(examples) 
+            self.agent.train(examples, self.args.epochs. self.args.batch_size) 
 
-
-
-            if i % arenaCompareEveryN == 0:
+            if i % self.args.update_every_n == 0:
+                
+                self.replayBuf.save(f'temp/iter-{i}.pth.tar.examples')
 
                 print('pitting random model...')
 
-                nmcts = MCTS(self.game, self.agent, self.args)
-                player1 = lambda x: np.argmax(nmcts.getActionProb(x, temp=0))
-                player2 = RandomPlayer(g).play
-                arena = Arena(player1, player2, self.game)
+                player1 = lambda x: np.argmax(self.agent.predict_mcts(x, temp=0))
+                player2 = RandomPlayer().play
+                arena = Arena(player1, player2)
 
                 pwins, nwins, draws = arena.playGames(self.args.arenaCompare)
 
-          
-                self.agent.save_checkpoint(folder=self.args.checkpoint,
-                                                filename=f'temp.pth.tar')        
+                self.agent.save_checkpoint(self.args.checkpoint_dir + f'checkpoint_{i}.h5')        
 
 
 
-def train():
+def train(): 
 
-
-
-    agent = Agent() 
+    agent = Agent(dotdict({   
+        'numMCTSSims': 25, 
+        'cpuct':1.0
+    })) 
     # agent.load_checkpoint('./temp/checkpoint_17.h5')
 
     args = dotdict({
-        'numIters': 100000,
-        'numEps': numEps,       
+
+        'epochs': epochs,
+        'batch_size': batch_size,
+
+        'nIters': 100000,
+        'nEps': nEps,       
         'tempThreshold': 10,  
         
-        'updateThreshold': 0.5,
+        # 'updateThreshold': 0.5,
         'arenaCompare': arenaCompare,
+        'update_every_n': update_every_n,
 
         'numMCTSSims': 25,         
         'cpuct': 1,
 
-        'checkpoint': './temp/',
-        'load_model': False, 
-        'numItersForTrainExamplesHistory': 5
+        'checkpoint_dir': './temp/',
+        # 'load_model': False, 
+        # 'numItersForTrainExamplesHistory': 5
+        'replayBufferLength': replayBufferLength
     })
  
 
     trainer = Trainer(agent, args)
-
-
+    trainer.train()
 
 
 
@@ -1037,53 +900,27 @@ train()
 
 
 
-
-
-
-class HumanTicTacToePlayer():
-    def __init__(self, game, n):
-        self.game = game
-        self.n = n
-
-    def play(self, board):
-        boardvalues = np.arange(self.n*self.n*self.n).reshape(self.n,self.n,self.n)
-        validvalue = np.arange(self.n*self.n*self.n)
-        # display(board)
-        valid = self.game.getValidMoves(board, 1)
-        for i in range(len(valid)):
-            if valid[i] == 1:
-                action = validvalue[i]
-                # print(np.argwhere(boardvalues == action))
-
-        while True:  
-            a = input()  
-            z,x,y = [int(x) for x in a.split(' ')]
-            boardvalues = np.arange(self.n*self.n*self.n).reshape(self.n,self.n,self.n)
-            a = boardvalues[z][x][y]
-            if valid[a]:
-                break
-            else:
-                print('Invalid')
-
-        return a
  
 def evaluate(): 
 
     g = Game(4)
  
-    hp = HumanTicTacToePlayer(g, 4).play
-    rp = RandomPlayer(g).play
+    hp = HumanTicTacToePlayer().play
+    rp = RandomPlayer().play
  
-    agent = Agent(g)
-    agent.load_checkpoint('./temp', 'best.h5')
-    args1 = dotdict({'numMCTSSims': 50, 'cpuct':1.0}) 
-    mcts1 = MCTS(g, agent, args1) 
-    player1 = lambda x: np.argmax(mcts1.getActionProb(x, temp=0))
+    # agent = Agent(g)
+    agent = Agent(dotdict({   
+        'numMCTSSims': 50, 
+        'cpuct':1.0
+    }))     
+    agent.load_checkpoint('./temp/checkpoint_17.h5')
+ 
+    player1 = lambda x: np.argmax(agent.predict_mcts(x, temp=0))
  
     # player2 = hp
     player2 = rp
    
-    arena = Arena(player1, player2, g, display=Game.display)
+    arena = Arena(player1, player2, display=Game.display)
 
     # print(arena.playGames(2, verbose=True))
     pwins, nwins, draws = arena.playGames(10)
