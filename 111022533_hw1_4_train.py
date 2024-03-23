@@ -90,6 +90,72 @@ class TicTacToeNNet():
                                         optimizer=Adam(args.lr))
  
 
+# class TicTacToeNNet():
+#     def __init__(self, game, args):
+#         # game params
+#         self.board_z, self.board_x, self.board_y = game.getBoardSize()
+#         self.action_size = game.getActionSize()
+#         self.args = args
+
+#         # Neural Net
+#         self.input_boards = Input(shape=(self.board_z, self.board_x, self.board_y))    # s: batch_size x board_x x board_y
+
+#         x_image = Reshape((self.board_z, self.board_x, self.board_y, 1))(self.input_boards)                # batch_size  x board_x x board_y x 1
+        
+#         num_channels = 512
+
+#         h_conv1 = Activation('relu')(
+#             BatchNormalization(axis=3)(
+#                 # 3 * 3 * args.num_channels * 4
+#                 Conv3D(num_channels, 3, padding='same')(x_image)))         # batch_size  x board_x x board_y x num_channels
+        
+#         h_conv2 = Activation('relu')(
+#             BatchNormalization(axis=3)(
+#                 Conv3D(num_channels, 3, padding='same')(h_conv1)))         # batch_size  x board_x x board_y x num_channels
+        
+#         h_conv3 = Activation('relu')(
+#             BatchNormalization(axis=3)(
+#                 Conv3D(num_channels, 3, padding='same')(h_conv2)))        # batch_size  x (board_x) x (board_y) x num_channels
+        
+#         h_conv4 = Activation('relu')(
+#             BatchNormalization(axis=3)(
+#                 Conv3D(num_channels, 3, padding='valid')(h_conv3)))        # batch_size  x (board_x-2) x (board_y-2) x num_channels
+        
+#         h_flat = Flatten()(h_conv4)       
+
+#         s_fc1 = Dropout(args.dropout)(
+#             Activation('relu')(
+#                 BatchNormalization(axis=1)(Dense(1024)(h_flat))))  # batch_size x 1024
+
+#         s_fc2 = Dropout(args.dropout)(
+#             Activation('relu')(
+#                 BatchNormalization(axis=1)(Dense(512)(s_fc1))))          # batch_size x 1024
+
+#         # s_fc1 = Dropout(args.dropout)(
+#         #     Activation('relu')(
+#         #         BatchNormalization(axis=1)(Dense(512)(h_conv4_flat))))  # batch_size x 1024
+
+#         # s_fc2 = Dropout(args.dropout)(
+#         #     Activation('relu')(
+#         #         BatchNormalization(axis=1)(Dense(256)(s_fc1))))          # batch_size x 1024
+
+
+#         self.pi = Dense(self.action_size, activation='softmax', name='pi')(s_fc2)   # batch_size x self.action_size
+        
+#         self.v = Dense(1, activation='tanh', name='v')(s_fc2)                    # batch_size x 1
+
+#         self.model = Model(inputs=self.input_boards, outputs=[self.pi, self.v])
+
+#         # loss is categorical_crossentropy + mean_squared_error
+
+
+        
+#         self.model.compile(loss=['categorical_crossentropy','mean_squared_error'], 
+#                                         optimizer=Adam(args.lr))
+ 
+
+
+
 class NNetWrapper():
     def __init__(self, game):
  
@@ -698,7 +764,9 @@ class Arena():
         twoWon = 0
         draws = 0
         for _ in range(num) :
+            
             gameResult = self.playGame(verbose=verbose)
+            print(f'playGame{_}, gameResult: {gameResult}')
             if gameResult == 1:
                 oneWon += 1
             elif gameResult == -1:
@@ -709,7 +777,9 @@ class Arena():
         self.player1, self.player2 = self.player2, self.player1
 
         for _ in range(num):
+            
             gameResult = self.playGame(verbose=verbose)
+            print(f'playGame{num+_}, gameResult: {gameResult}')
             if gameResult == -1:
                 oneWon += 1
             elif gameResult == 1:
@@ -865,8 +935,6 @@ class Coach():
 
 def train():
 
-
-
     game = TicTacToeGame(4)
     nnet = NNetWrapper(game)
 
@@ -895,7 +963,7 @@ def train():
 
 
 
-train()
+# train()
 
 
 
@@ -931,6 +999,19 @@ class HumanTicTacToePlayer():
 
         return a
 
+class RandomPlayer():
+
+    def __init__(self, game):
+        self.game = game
+
+    def play(self, board):
+        a = np.random.randint(self.game.getActionSize())
+        valids = self.game.getValidMoves(board, 1)
+        while valids[a]!=1:
+            a = np.random.randint(self.game.getActionSize())
+        return a
+
+
 
 def evaluate():
 
@@ -940,23 +1021,33 @@ def evaluate():
     g = TicTacToeGame(4)
  
     hp = HumanTicTacToePlayer(g, 4).play
+    rp = RandomPlayer(g).play
 
     # nnet players
     n1 = NNetWrapper(g)
-    n1.load_checkpoint('./temp', 'iter20.h5')
+    n1.load_checkpoint('./temp', 'best.h5')
     args1 = dotdict({'numMCTSSims': 50, 'cpuct':1.0})
  
     mcts1 = MCTS(g, n1, args1) 
 
     n1p = lambda x: np.argmax(mcts1.getActionProb(x, temp=0))
  
-    player2 = hp
+    # player2 = hp
+    player2 = rp
    
     arena = Arena(n1p, player2, g, display=TicTacToeGame.display)
 
-    print(arena.playGames(2, verbose=True))
 
-# evaluate()
+
+
+
+    # print(arena.playGames(2, verbose=True))
+    pwins, nwins, draws = arena.playGames(10)
+
+    # print(f'win rate: {float(nwins) / (pwins + nwins)}')
+    print(f'pwins: {pwins} ,nwins: {nwins}, draws :{draws}')
+ 
+evaluate()
 
 
 
