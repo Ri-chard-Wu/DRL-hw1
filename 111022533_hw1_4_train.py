@@ -16,41 +16,44 @@ import tensorflow.keras.backend as K
 import tensorflow as tf
 from pickle import Pickler, Unpickler
 
- 
-# training_para = dotdict({
-#     'nEps': 20, 
-#     'epochs': 5,
-#     'arenaCompare': 10,
-#     'update_every_n': 3,        
-#     'batch_size': 64,
-
-#     'nIters': 100000, 
-#     'tempThreshold': 10,   
-#     'numMCTSSims': 25,         
-#     'cpuct': 1, 
-#     'checkpoint_dir': './temp/', 
-# })
-
+class dotdict(dict):
+    def __getattr__(self, name):
+        return self[name]
 
 training_para = dotdict({
-    'nEps': 1, 
-    'epochs': 1,
-    'arenaCompare': 2,
-    'update_every_n': 1,        
+    'nEps': 20, 
+    'epochs': 5,
+    'arenaCompare': 10,
+    'update_every_n': 3,        
     'batch_size': 64,
     'buf_size': 2**16,
 
     'nIters': 100000, 
     'tempThreshold': 10,   
-    'numMCTSSims': 25,   
+    'numMCTSSims': 25,         
+    'cpuct': 1, 
     'checkpoint_dir': './temp/', 
 })
 
 
 
-class dotdict(dict):
-    def __getattr__(self, name):
-        return self[name]
+# training_para = dotdict({
+#     'nEps': 1, 
+#     'epochs': 1,
+#     'arenaCompare': 2,
+#     'update_every_n': 1,        
+#     'batch_size': 64,
+#     'buf_size': 2**16,
+
+#     'nIters': 100000, 
+#     'tempThreshold': 10,   
+#     'numMCTSSims': 25,   
+#     'checkpoint_dir': './temp/', 
+# })
+
+
+
+
 
    
 class Game():
@@ -228,8 +231,8 @@ class Game():
        
         for y in range(n):
             count = 0
-            for d in range(self.n):
-                if canonBoard[self.n-d-1,d,y]==1:
+            for d in range(n):
+                if canonBoard[n-d-1,d,y]==1:
                     count += 1
             if count==win:
                 return True
@@ -407,16 +410,16 @@ class Agent(tf.keras.Model):
      
 
     @tf.function
-    def train_step(self, batch): 
+    def _train_step(self, batch): 
 
-        x, a_prob, v = list(zip(*batch))
+        # x, a_prob, v = list(zip(*batch))
 
-        x = tf.convert_to_tensor(x, dtype=tf.float32)
-        a_prob = tf.convert_to_tensor(a_prob, dtype=tf.float32)
-        v = tf.convert_to_tensor(v, dtype=tf.float32)
+        # x = tf.convert_to_tensor(x, dtype=tf.float32)
+        # a_prob = tf.convert_to_tensor(a_prob, dtype=tf.float32)
+        # v = tf.convert_to_tensor(v, dtype=tf.float32)
 
         # x: [bz, 4, 4, 4], a_prob: [bz, 65], v: [bz,]        
-        # x, a_prob, v = data 
+        x, a_prob, v = batch 
 
         with tf.GradientTape() as tape:
             
@@ -432,8 +435,18 @@ class Agent(tf.keras.Model):
         gradients = tape.gradient(total_loss, self.trainable_variables) 
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
     
-        return total_loss.numpy()
- 
+        return total_loss
+    
+    def train_step(self, batch):
+        
+        x, a_prob, v = list(zip(*batch))
+
+        x = tf.convert_to_tensor(x, dtype=tf.float32)
+        a_prob = tf.convert_to_tensor(a_prob, dtype=tf.float32)
+        v = tf.convert_to_tensor(v, dtype=tf.float32)
+
+        return self._train_step((x, a_prob, v)).numpy()
+        
   
     def _predict(self, canonBoard): 
 
@@ -496,7 +509,7 @@ class MCTSAgent(Agent):
         a = np.argmax(self.predict(canonBoard))
  
         (z,y,x) = np.argwhere(Game.coord2actionId == a)[0] 
-        assert board[z][y][x] == 0
+        assert canonBoard[z][y][x] == 0
 
         return [x, y, z]
     
@@ -638,74 +651,10 @@ class RandomPlayer():
             a = np.random.randint(Game.actionSize)
 
         (z,y,x) = np.argwhere(Game.coord2actionId == a)[0] 
-        assert board[z][y][x] == 0
+        assert canonBoard[z][y][x] == 0
 
         return [x, y, z]
 
-
-
-
-
-# class Arena(): 
-#     def __init__(self, player1, player2, display=None):
-      
-#         self.player1 = player1
-#         self.player2 = player2 
-#         self.display = display
-
-
-#     def playGame(self, verbose=False):
-        
-#         players = {1: self.player1, -1: self.player2}
-#         curPlayer = 1
-#         canonBoard = Game.getInitBoard()
-       
-#         while Game.getGameEnded(canonBoard) == 0:
- 
-#             action = players[curPlayer](canonBoard) 
-#             valids = Game.getValidMoves(canonBoard)
-            
-#             assert valids[action] > 0
- 
-#             canonBoard = Game.getNextState(canonBoard, action) 
-#             curPlayer = -curPlayer
-
-#         return curPlayer * Game.getGameEnded(canonBoard)
-
-
-
-#     def playGames(self, num, verbose=False): 
-
-#         num = int(num / 2)
-#         oneWon = 0
-#         twoWon = 0
-#         draws = 0
-#         for _ in range(num) :
-            
-#             gameResult = self.playGame(verbose=verbose)
-#             print(f'playGame{_}, gameResult: {gameResult}')
-#             if gameResult == 1:
-#                 oneWon += 1
-#             elif gameResult == -1:
-#                 twoWon += 1
-#             else:
-#                 draws += 1
-
-#         self.player1, self.player2 = self.player2, self.player1
-
-#         for _ in range(num):
-            
-#             gameResult = self.playGame(verbose=verbose)
-#             print(f'playGame{num+_}, gameResult: {gameResult}')
-#             if gameResult == -1:
-#                 oneWon += 1
-#             elif gameResult == 1:
-#                 twoWon += 1
-#             else:
-#                 draws += 1
-
-#         return oneWon, twoWon, draws
- 
 
 
 class Arena(): 
@@ -875,8 +824,8 @@ class Trainer():
             losses = []
             n = int(len(examples) / self.args.batch_size)  
             for epoch in range(self.args.epochs):     
-                for i in range(n):
-                    batch = examples[i*self.args.batch_size:(i+1)*self.args.batch_size] 
+                for j in range(n):
+                    batch = examples[j*self.args.batch_size:(j+1)*self.args.batch_size] 
                     loss = self.mctsAgent.train_step(batch)
                     losses.append(loss)
             print(f'loss: {np.mean(losses)}')
@@ -907,10 +856,10 @@ def train():
     })
  
     mctsAgent = MCTSAgent(agent_para)
-    # mctsAgent.load_checkpoint('./temp/checkpoint_21.h5')
+    mctsAgent.load_checkpoint('./temp/checkpoint_1023.h5')
 
     replayBuf = ReplayBuffer(training_para.buf_size)
-    # replayBuf.load('./temp/iter-21.pth.tar.examples')
+    replayBuf.load('./temp/checkpoint_1023.pth.tar.examples')
 
     trainer = Trainer(mctsAgent, replayBuf, training_para)
     trainer.train()

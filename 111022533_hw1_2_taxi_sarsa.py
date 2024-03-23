@@ -54,10 +54,10 @@ class Agent:
             action = torch.argmax(self.q_table[state]).item()
         return action
 
-    def update_policy(self, state, action, reward, state_prime, action_prime): 
-        # best_q = np.max(self.q_table[state_prime])
+    def update_policy(self, state, action, reward, state_prime, action_prime):         
         self.q_table[state][action] += self.learning_rate * (
-            reward + self.discount_factor * self.q_table[state_prime][action_prime] - self.q_table[state][action])
+            reward + self.discount_factor * \
+            self.q_table[state_prime][action_prime] - self.q_table[state][action])
 
     def update_parameters(self, episode):
         self.exploring_rate = \

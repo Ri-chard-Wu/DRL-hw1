@@ -8,34 +8,21 @@ class GridworldEnv():
         self.nA = 4
         self.nS = 16
         self.P = {}
-        self.terminal_st = [0, 15]
-
+        self.terminal_st = [0, 15] 
         for r in range(self.shape[0]):
-            for c in range(self.shape[1]):
-                
+            for c in range(self.shape[1]): 
                 s = self.pos2st((r, c))
-                self.P[s] = {}
-
-                for a in range(self.nA):
+                self.P[s] = {} 
+                for a in range(self.nA): 
+                    p = None 
+                    if  (a == 0): p = (max(r-1, 0), c) # up 
+                    elif(a == 1): p = (r, min(c+1, self.shape[1]-1)) # right 
+                    elif(a == 2): p = (min(r+1, self.shape[0]-1), c) # down 
+                    elif(a == 3): p = (r, max(c-1, 0)) # left
                     
-                    p = None
-                    
-                    # up
-                    if  (a == 0): p = (max(r-1, 0), c)
-                    # right
-                    elif(a == 1): p = (r, min(c+1, self.shape[1]-1))
-                    # down
-                    elif(a == 2): p = (min(r+1, self.shape[0]-1), c)
-                    # left
-                    elif(a == 3): p = (r, max(c-1, 0))
-                    
-                    st_nxt = self.pos2st(p)
-
-                    done = False
-                    # if st_nxt in self.terminal_st:
-                    if(self.isTerminal(st_nxt)):
-                        done = True
-
+                    st_nxt = self.pos2st(p) 
+                    done = False 
+                    if(self.isTerminal(st_nxt)): done = True 
                     self.P[s][a] = [(1, st_nxt, -1, done)]
 
         for s in range(self.nS):
@@ -51,8 +38,7 @@ class GridworldEnv():
  
 
 
-def policy_eval(policy, env, gamma=0.9, theta=0.00001):
- 
+def policy_eval(policy, env, gamma=0.9, theta=0.00001): 
     V = np.zeros(env.nS)
     while True:
         delta = 0
@@ -64,15 +50,14 @@ def policy_eval(policy, env, gamma=0.9, theta=0.00001):
                     v += action_prob * prob * (reward + gamma * V[next_state])
             delta = max(delta, np.abs(v - V[s]))
             V[s] = v
-        
-        if delta < theta:
-            break
-            
+        if delta < theta: break 
     return np.array(V)
  
 
 env = GridworldEnv()
+
 policy = np.ones([env.nS, env.nA]) / env.nA
+
 gamma = 0.1
 
 v = policy_eval(policy, env, gamma)
