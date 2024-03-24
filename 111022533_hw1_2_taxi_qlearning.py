@@ -1,4 +1,5 @@
-import gymnasium as gym
+# import gymnasium as gym
+import gym
 import numpy as np
 import torch
 
@@ -256,6 +257,6 @@ def evaluate(path):
     cum_reward_avg = cum_reward_avg / n
     print(f'cum_reward_avg: {cum_reward_avg}')
 
-evaluate('111022533_hw1_2_taxi_qlearning.pth')
+# evaluate('111022533_hw1_2_taxi_qlearning.pth')
  
  

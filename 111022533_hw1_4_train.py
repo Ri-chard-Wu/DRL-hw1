@@ -20,36 +20,43 @@ class dotdict(dict):
     def __getattr__(self, name):
         return self[name]
 
-training_para = dotdict({
-    'nEps': 20, 
-    'epochs': 5,
-    'arenaCompare': 10,
-    'update_every_n': 3,        
-    'batch_size': 64,
-    'buf_size': 2**16,
-
-    'nIters': 100000, 
-    'tempThreshold': 10,   
-    'numMCTSSims': 25,         
-    'cpuct': 1, 
-    'checkpoint_dir': './temp/', 
-})
-
-
-
 # training_para = dotdict({
-#     'nEps': 1, 
-#     'epochs': 1,
-#     'arenaCompare': 2,
-#     'update_every_n': 1,        
+#     'nEps': 20, 
+#     'nEpochs': 5,
+#     'nEvals': 10,
+#     'evaluate_every_n': 5,  
+#     'save_every_n': 3,        
 #     'batch_size': 64,
 #     'buf_size': 2**16,
 
+
+    # 'nSims_train': 25,
+    # 'nSims_eval': 50,
+
 #     'nIters': 100000, 
-#     'tempThreshold': 10,   
-#     'numMCTSSims': 25,   
+#     'tempThreshold': 10,        
+#     'cpuct': 1, 
 #     'checkpoint_dir': './temp/', 
 # })
+
+
+
+training_para = dotdict({
+    'nEps': 1, 
+    'nEpochs': 1,
+    'nEvals': 2,
+    'evaluate_every_n': 1, 
+    'save_every_n': 1,        
+    'batch_size': 64,
+    'buf_size': 2**16,
+
+    'nSims_train': 25,
+    'nSims_eval': 50,
+
+    'nIters': 100000, 
+    'tempThreshold': 10,    
+    'checkpoint_dir': './temp/', 
+})
 
 
 
@@ -412,13 +419,6 @@ class Agent(tf.keras.Model):
     @tf.function
     def _train_step(self, batch): 
 
-        # x, a_prob, v = list(zip(*batch))
-
-        # x = tf.convert_to_tensor(x, dtype=tf.float32)
-        # a_prob = tf.convert_to_tensor(a_prob, dtype=tf.float32)
-        # v = tf.convert_to_tensor(v, dtype=tf.float32)
-
-        # x: [bz, 4, 4, 4], a_prob: [bz, 65], v: [bz,]        
         x, a_prob, v = batch 
 
         with tf.GradientTape() as tape:
@@ -437,6 +437,7 @@ class Agent(tf.keras.Model):
     
         return total_loss
     
+
     def train_step(self, batch):
         
         x, a_prob, v = list(zip(*batch))
@@ -487,11 +488,14 @@ class Agent(tf.keras.Model):
 
 class MCTSAgent(Agent):
      
-    def __init__(self, args):
+    def __init__(self, para):
         super().__init__()  
 
-        self.args = args     
+        self.para = para     
         self.reset()
+
+    def set_n_sim(self, n):
+        self.para.nSims = n
 
     def reset(self):
         self.Qsa = {}  # stores Q values for s,a (as defined in the paper)
@@ -519,7 +523,7 @@ class MCTSAgent(Agent):
         """
             canonBoard: cannot be terminal state.
         """
-        for i in range(self.args.numMCTSSims):
+        for i in range(self.para.nSims):
             self.search(canonBoard)
 
         s = Game.hash(canonBoard)
@@ -606,36 +610,12 @@ class MCTSAgent(Agent):
         cur_best = -float('inf')
         a_best = -1        
         for a in self.Qsa[s].keys(): # all are valids actions.
-            u = self.Qsa[s][a] + self.args.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s] + 1e-8) / (1 + self.Nsa[s][a])
+            u = self.Qsa[s][a] + self.para.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s] + 1e-8) / (1 + self.Nsa[s][a])
             if u > cur_best:
                 cur_best = u
                 a_best = a
         
         return a_best
- 
- 
-class HumanTicTacToePlayer():
- 
-
-    def play(self, canonBoard): 
-        validvalue = np.arange(Game.actionSize)
-       
-        valid = Game.getValidMoves(canonBoard)
-
-        for i in range(len(valid)):
-            if valid[i] == 1:
-                action = validvalue[i] 
-
-        while True:  
-            a = input()  
-            z,x,y = [int(x) for x in a.split(' ')] 
-            a = Game.coord2actionId[z][x][y]
-            if valid[a]:
-                break
-            else:
-                print('Invalid')
-
-        return a
 
 
 class RandomPlayer():
@@ -656,74 +636,6 @@ class RandomPlayer():
         return [x, y, z]
 
 
-
-class Arena(): 
-    def __init__(self, player1, player2, display=None):
-      
-        self.player1 = player1
-        self.player2 = player2 
-        self.display = display
-
-
-    def playGame(self, verbose=False):
-        
-        players = {1: self.player1, -1: self.player2}
-        curPlayer = 1
-        canonBoard = Game.getInitBoard()
-       
-        while Game.getGameEnded(canonBoard) == 0:
-            
-            board = canonBoard * curPlayer
-            state = np.hstack((np.array([curPlayer]), board.reshape(Game.actionSize)))
-
-            a = players[curPlayer].choose_action(state) 
-            actionId = a[0] + 4*a[1] + 16*a[2]
-            valids = Game.getValidMoves(canonBoard)
-            
-            assert valids[actionId] > 0
- 
-            canonBoard = Game.getNextState(canonBoard, actionId) 
-            curPlayer = -curPlayer
-
-        return curPlayer * Game.getGameEnded(canonBoard)
-
-
-
-    def playGames(self, num, verbose=False): 
-
-        num = int(num / 2)
-        oneWon = 0
-        twoWon = 0
-        draws = 0
-        for _ in range(num) :
-            
-            gameResult = self.playGame(verbose=verbose)
-            print(f'playGame{_}, gameResult: {gameResult}')
-            if gameResult == 1:
-                oneWon += 1
-            elif gameResult == -1:
-                twoWon += 1
-            else:
-                draws += 1
-
-        self.player1, self.player2 = self.player2, self.player1
-
-        for _ in range(num):
-            
-            gameResult = self.playGame(verbose=verbose)
-            print(f'playGame{num+_}, gameResult: {gameResult}')
-            if gameResult == -1:
-                oneWon += 1
-            elif gameResult == 1:
-                twoWon += 1
-            else:
-                draws += 1
-
-        return oneWon, twoWon, draws
- 
-
-
-
 class ReplayBuffer():
 
     def __init__(self, maxLength):
@@ -741,11 +653,6 @@ class ReplayBuffer():
             self.buf = tmp   
         
         self.buf.extend(examples) 
-
-
-    def getBatch(self, i, bsz): 
-        return self.buf[i*bsz:(i+1)*bsz]
-
 
     def sample(self):
         out = [i for i in self.buf]
@@ -765,10 +672,10 @@ class ReplayBuffer():
  
 class Trainer():
 
-    def __init__(self, mctsAgent, replayBuf, args): 
+    def __init__(self, mctsAgent, replayBuf, para): 
 
         self.mctsAgent = mctsAgent
-        self.args = args
+        self.para = para
         self.replayBuf = replayBuf
 
 
@@ -776,7 +683,9 @@ class Trainer():
 
         examples = []
 
-        for j in range(self.args.nEps): 
+        self.mctsAgent.set_n_sim(self.para.nSims_train)
+
+        for j in range(self.para.nEps): 
             
             self.mctsAgent.reset()
 
@@ -787,8 +696,8 @@ class Trainer():
 
             while True:
                  
-                temp = int(t < self.args.tempThreshold) 
-                               
+                # temp = int(t < self.para.tempThreshold) 
+                temp = 0
                 pi = self.mctsAgent.predict(canonBoard, temp=temp)
  
                 sym = Game.getSymmetries(canonBoard, pi) # data augmentation
@@ -812,7 +721,7 @@ class Trainer():
 
     def train(self):
 
-        for i in range(self.args.nIters):
+        for i in range(self.para.nIters):
             print('##############')
             print(f'iter: {i}')
  
@@ -822,44 +731,83 @@ class Trainer():
             
             print('training...')            
             losses = []
-            n = int(len(examples) / self.args.batch_size)  
-            for epoch in range(self.args.epochs):     
+            n = int(len(examples) / self.para.batch_size)  
+            for epoch in range(self.para.nEpochs):     
                 for j in range(n):
-                    batch = examples[j*self.args.batch_size:(j+1)*self.args.batch_size] 
+                    batch = examples[j*self.para.batch_size:(j+1)*self.para.batch_size] 
                     loss = self.mctsAgent.train_step(batch)
                     losses.append(loss)
             print(f'loss: {np.mean(losses)}')
  
 
-            if i % self.args.update_every_n == 0: 
-
+            if i % self.para.save_every_n == 0:
                 self.replayBuf.save(f'temp/checkpoint_{i}.pth.tar.examples')
+                self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + f'checkpoint_{i}.h5')        
+ 
+            if i % self.para.evaluate_every_n == 0: 
+                self.evaluate(self.para.nEvals)
 
-                print('pitting random model...')
 
-                self.mctsAgent.reset()
-                arena = Arena(self.mctsAgent, RandomPlayer())
+                
+    def evaluate(self, num=10):
+        
+        print('pitting random model...')
 
-                pwins, nwins, draws = arena.playGames(self.args.arenaCompare)
-                print(f'pwins: {pwins}, nwins: {nwins}, draws: {draws}')
+        mid = int(num / 2)
+        oneWon = 0
+        twoWon = 0
+        draws = 0
+        
+        self.mctsAgent.set_n_sim(self.para.nSims_eval)
 
-                self.mctsAgent.save_checkpoint(self.args.checkpoint_dir + f'checkpoint_{i}.h5')        
+        for i in range(1, num+1) :
 
+            self.mctsAgent.reset()
+            
+            players = {1: self.mctsAgent, -1: RandomPlayer()}
+
+
+            if(i < mid): curPlayer = 1
+            else: curPlayer = -1
+            
+            canonBoard = Game.getInitBoard()
+        
+            while Game.getGameEnded(canonBoard) == 0:
+                
+                board = canonBoard * curPlayer
+                state = np.hstack((np.array([curPlayer]), board.reshape(Game.actionSize)))
+
+                a = players[curPlayer].choose_action(state) 
+                actionId = a[0] + 4*a[1] + 16*a[2]
+                valids = Game.getValidMoves(canonBoard)
+                
+                assert valids[actionId] > 0
+    
+                canonBoard = Game.getNextState(canonBoard, actionId) 
+                curPlayer = -curPlayer
+
+            r = curPlayer * Game.getGameEnded(canonBoard)
+                        
+            if r == 1: oneWon += 1
+            elif r == -1: twoWon += 1
+            else: draws += 1       
+
+            print(f'[{i}/{num}] pwins: {oneWon}, nwins: {twoWon}, draws: {draws}') 
  
 
 def train(): 
 
 
     agent_para = dotdict({   
-        'numMCTSSims': 25, 
+        'nSims': 25,  
         'cpuct':1.0
     })
  
     mctsAgent = MCTSAgent(agent_para)
-    mctsAgent.load_checkpoint('./temp/checkpoint_1023.h5')
+    # mctsAgent.load_checkpoint('./temp/checkpoint_1023.h5')
 
     replayBuf = ReplayBuffer(training_para.buf_size)
-    replayBuf.load('./temp/checkpoint_1023.pth.tar.examples')
+    # replayBuf.load('./temp/checkpoint_1023.pth.tar.examples')
 
     trainer = Trainer(mctsAgent, replayBuf, training_para)
     trainer.train()
@@ -868,37 +816,6 @@ def train():
 
 train()
 
-
-
-
- 
-# def evaluate(): 
-
-#     g = Game()
- 
-#     hp = HumanTicTacToePlayer().play
-#     rp = RandomPlayer().play
- 
-#     # agent = Agent(g)
-#     mctsAgent = MCTSAgent(dotdict({   
-#         'numMCTSSims': 50, 
-#         'cpuct':1.0
-#     }))     
-#     mctsAgent.load_checkpoint('./temp/checkpoint_17.h5')
- 
-#     player1 = lambda x: np.argmax(mctsAgent.predict(x, temp=0))
- 
-#     # player2 = hp
-#     player2 = rp
-   
-#     arena = Arena(player1, player2, display=Game.display)
-
-#     # print(arena.playGames(2, verbose=True))
-#     pwins, nwins, draws = arena.playGames(10)
-#     print(f'pwins: {pwins} ,nwins: {nwins}, draws :{draws}')
-   
-
-# evaluate()
 
 
 

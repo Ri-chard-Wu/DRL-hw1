@@ -1,4 +1,4 @@
-import gymnasium as gym
+import  gym
 import numpy as np
 import torch
 # # import gym
@@ -163,8 +163,8 @@ def train(save_path=None):
     learning_rates = []
 
     print_every_episode = 1
-    show_gif_every_episode = 5000
-    NUM_EPISODE = 5000
+    show_gif_every_episode = 2500
+    NUM_EPISODE = 2500
     for episode in range(0, NUM_EPISODE):
     
         observation, info = env.reset() 
@@ -215,14 +215,14 @@ def train(save_path=None):
             renderer.render_all(s_a_pairs)
 
     print(f'reward_per_epoch (sarsa): {reward_per_epoch}')
-    if(save_path is not None):
-        print('save model')
-        torch.save(agent.q_table, save_path)
+    # if(save_path is not None):
+    #     print('save model')
+    #     torch.save(agent.q_table, save_path)
       
 
 
 # train('111022533_hw1_2_taxi_sarsa.pth')
-# train()
+train()
 
 
 
@@ -264,9 +264,7 @@ def evaluate(path):
     print(f'cum_reward_avg: {cum_reward_avg}')
 
 
-# print('a')
-evaluate('111022533_hw1_2_taxi_sarsa.pth')
-# print('b')
+# evaluate('111022533_hw1_2_taxi_sarsa.pth')
 
 
 

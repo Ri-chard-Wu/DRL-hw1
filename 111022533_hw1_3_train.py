@@ -24,14 +24,12 @@ class TicTacToe:
                              [0, 0, 0],
                              [0, 0, 0]])
         self.player = np.random.choice([1, -1], 1, p=[0.5, 0.5])[0]
-        # print(f"[reset] player: {self.player}")
-
         observation = np.hstack(([self.player], self.map.flatten()))
         info = {'winner': 0}
         self.nSpace = 9
         return observation, info
 
-    def _hasLine(self):
+    def isGameEnded(self):
 
         def reduce(v): return int(abs(sum(v)))
 
@@ -83,7 +81,7 @@ class TicTacToe:
         else:
             self.nSpace -= 1
 
-            if(self._hasLine()):                
+            if(self.isGameEnded()):                
                 info['winner'] = curPlayer
                 reward = 10
                 terminated = True
@@ -93,6 +91,7 @@ class TicTacToe:
 
         self.player = observation[0]
         return observation, reward, terminated, False, info
+
 
     def render(self):
         symMap = {1: 'x', -1: 'o', 0: '-'}                    
