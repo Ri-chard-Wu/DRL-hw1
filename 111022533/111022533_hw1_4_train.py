@@ -42,16 +42,16 @@ class dotdict(dict):
 
 
 training_para = dotdict({
-    'nEps': 1, 
-    'nEpochs': 1,
-    'nEvals': 2,
-    'evaluate_every_n': 1, 
-    'save_every_n': 1,        
+    'nEps': 10, 
+    'nEpochs': 5,
+    'nEvals': 6,
+    'evaluate_every_n': 4, 
+    'save_every_n': 5,        
     'batch_size': 64,
     'buf_size': 2**16,
 
     'nSims_train': 25,
-    'nSims_eval': 50,
+    'nSims_eval': 25,
 
     'nIters': 100000, 
     'tempThreshold': 10,    
@@ -393,7 +393,9 @@ class Agent(tf.keras.Model):
         with tf.GradientTape() as tape:
             
             a_prob_pred, v_pred = self(x)
- 
+
+            v_pred = tf.squeeze(v_pred)
+
             a_loss = tf.reduce_mean(
                 tf.keras.losses.categorical_crossentropy(a_prob, a_prob_pred))
             v_loss = tf.reduce_mean(tf.square(v - v_pred))
@@ -404,7 +406,7 @@ class Agent(tf.keras.Model):
         gradients = tape.gradient(total_loss, self.trainable_variables) 
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
     
-        return total_loss
+        return a_loss, v_loss
     
 
     def train_step(self, batch):
@@ -414,8 +416,9 @@ class Agent(tf.keras.Model):
         x = tf.convert_to_tensor(x, dtype=tf.float32)
         a_prob = tf.convert_to_tensor(a_prob, dtype=tf.float32)
         v = tf.convert_to_tensor(v, dtype=tf.float32)
-
-        return self._train_step((x, a_prob, v)).numpy()
+        a_loss, v_loss = self._train_step((x, a_prob, v))
+        # print(f'a_loss, v_loss: {a_loss}, {v_loss}')
+        return a_loss.numpy(), v_loss.numpy()
         
   
     def _predict(self, canonBoard): 
@@ -425,7 +428,9 @@ class Agent(tf.keras.Model):
         pi, v = self(board) 
         
         pi = pi[0].numpy()
-        v = v[0].numpy()
+        v = v[0].numpy()[0]
+
+        # print(f'v: {v}')
 
         K.clear_session()
         tf.keras.backend.clear_session() 
@@ -560,13 +565,16 @@ class MCTSAgent(Agent):
                 self.Nsa[s][a] = 0
 
         self.Ns[s] = 0
+        
         return v
 
 
     def backprop(self, trajectory, r):
         for s, a in reversed(trajectory):
             r *= -1
+            
             self.Qsa[s][a] = (self.Nsa[s][a] * self.Qsa[s][a] + r) / (self.Nsa[s][a] + 1)
+            # print(f'simulate predict self.Qsa[s][a]: {self.Qsa[s][a]}, r: {r}')
             self.Nsa[s][a] += 1 
             self.Ns[s] += 1
 
@@ -699,14 +707,17 @@ class Trainer():
             examples = self.replayBuf.sample()
             
             print('training...')            
-            losses = []
+            a_losses = []
+            v_losses = []
             n = int(len(examples) / self.para.batch_size)  
             for epoch in range(self.para.nEpochs):     
                 for j in range(n):
                     batch = examples[j*self.para.batch_size:(j+1)*self.para.batch_size] 
-                    loss = self.mctsAgent.train_step(batch)
-                    losses.append(loss)
-            print(f'loss: {np.mean(losses)}')
+                    a_loss, v_loss = self.mctsAgent.train_step(batch)
+                    # self.mctsAgent.train_step(batch)
+                    a_losses.append(a_loss)
+                    v_losses.append(v_loss)
+            print(f'a_loss: {np.mean(a_losses)}, v_loss: {np.mean(v_losses)}')
  
 
             if i % self.para.save_every_n == 0:
@@ -719,79 +730,27 @@ class Trainer():
 
                
 
-    def evaluate(self, num=10):
-        
-        print('pitting old model...')
-
-        mid = int(num / 2)
-        oneWon = 0
-        twoWon = 0
-        draws = 0
-        
-        self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + f'temp.h5')                 
-        pnet = MCTSAgent(dotdict({'nSims': self.para.nSims_eval, 'cpuct':1.0})) 
-        # pnet = self.mctsAgent.__class__(dotdict({'nSims': self.para.nSims_eval, 'cpuct':1.0}))
-        pnet.load_checkpoint(self.para.checkpoint_dir + f'temp.h5')                        
-  
-        self.mctsAgent.set_n_sim(self.para.nSims_eval)
-
-        for i in range(1, num+1) :
-
-            self.mctsAgent.reset()
-            pnet.reset()
-            players = {1: self.mctsAgent, -1: pnet}
-
-
-            if(i < mid): curPlayer = 1
-            else: curPlayer = -1
-            
-            canonBoard = Game.getInitBoard()
-        
-            while Game.getGameEnded(canonBoard) == 0:
-                
-                board = canonBoard * curPlayer
-                state = np.hstack((np.array([curPlayer]), board.reshape(Game.actionSize)))
-
-                a = players[curPlayer].choose_action(state) 
-                actionId = a[0] + 4*a[1] + 16*a[2]
-                valids = Game.getValidMoves(canonBoard)
-                
-                assert valids[actionId] > 0
-    
-                canonBoard = Game.getNextState(canonBoard, actionId) 
-                curPlayer = -curPlayer
-
-            r = curPlayer * Game.getGameEnded(canonBoard)
-                        
-            if r == 1: oneWon += 1
-            elif r == -1: twoWon += 1
-            else: draws += 1       
-
-            print(f'[{i}/{num}] pwins: {oneWon}, nwins: {twoWon}, draws: {draws}') 
-
-
-        if twoWon + oneWon == 0 or float(oneWon) / (twoWon + oneWon) < 0.5:
-            self.mctsAgent.load_checkpoint(self.para.checkpoint_dir + f'temp.h5')
-        else:
-            self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + 'best.h5')
-
-
     # def evaluate(self, num=10):
         
-    #     print('pitting random model...')
+    #     print('pitting old model...')
 
     #     mid = int(num / 2)
     #     oneWon = 0
     #     twoWon = 0
     #     draws = 0
         
+    #     self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + f'temp.h5')                 
+    #     pnet = MCTSAgent(dotdict({'nSims': self.para.nSims_eval, 'cpuct':1.0})) 
+    #     # pnet = self.mctsAgent.__class__(dotdict({'nSims': self.para.nSims_eval, 'cpuct':1.0}))
+    #     pnet.load_checkpoint(self.para.checkpoint_dir + f'temp.h5')                        
+  
     #     self.mctsAgent.set_n_sim(self.para.nSims_eval)
 
     #     for i in range(1, num+1) :
 
     #         self.mctsAgent.reset()
-            
-    #         players = {1: self.mctsAgent, -1: RandomPlayer()}
+    #         pnet.reset()
+    #         players = {1: self.mctsAgent, -1: pnet}
 
 
     #         if(i < mid): curPlayer = 1
@@ -820,37 +779,88 @@ class Trainer():
     #         else: draws += 1       
 
     #         print(f'[{i}/{num}] pwins: {oneWon}, nwins: {twoWon}, draws: {draws}') 
+
+
+    #     if twoWon + oneWon == 0 or float(oneWon) / (twoWon + oneWon) < 0.5:
+    #         self.mctsAgent.load_checkpoint(self.para.checkpoint_dir + f'temp.h5')
+    #     else:
+    #         self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + 'best.h5')
+
+
+    def evaluate(self, num=10):
+        
+        print('pitting random model...')
+
+        mid = int(num / 2)
+        oneWon = 0
+        twoWon = 0
+        draws = 0
+        
+        self.mctsAgent.set_n_sim(self.para.nSims_eval)
+
+        for i in range(1, num+1) :
+
+            self.mctsAgent.reset()
+            
+            players = {1: self.mctsAgent, -1: RandomPlayer()}
+
+
+            if(i < mid): curPlayer = 1
+            else: curPlayer = -1
+            
+            canonBoard = Game.getInitBoard()
+        
+            while Game.getGameEnded(canonBoard) == 0:
+                
+                board = canonBoard * curPlayer
+                state = np.hstack((np.array([curPlayer]), board.reshape(Game.actionSize)))
+
+                a = players[curPlayer].choose_action(state) 
+                actionId = a[0] + 4*a[1] + 16*a[2]
+                valids = Game.getValidMoves(canonBoard)
+                
+                assert valids[actionId] > 0
+    
+                canonBoard = Game.getNextState(canonBoard, actionId) 
+                curPlayer = -curPlayer
+
+            r = curPlayer * Game.getGameEnded(canonBoard)
+                        
+            if r == 1: oneWon += 1
+            elif r == -1: twoWon += 1
+            else: draws += 1       
+
+            print(f'[{i}/{num}] pwins: {oneWon}, nwins: {twoWon}, draws: {draws}') 
  
 
 def train(): 
 
 
-    # agent_para = dotdict({   
-    #     'nSims': 25,  
-    #     'cpuct':1.0
-    # })
+    agent_para = dotdict({   
+        'nSims': 25,  
+        'cpuct':1.0
+    })
  
-    # mctsAgent = MCTSAgent(agent_para)
-    # # mctsAgent.load_checkpoint('./temp/checkpoint_18.h5')
+    mctsAgent = MCTSAgent(agent_para)
+    # mctsAgent.load_checkpoint('./temp/checkpoint_18.h5')
     # mctsAgent.load_checkpoint('./111022533/111022533_hw1_4_data')
  
-    module = importlib.import_module('111022533_hw1_4_test')
-    agent = module.Agent() 
-    agent.load_policy()
+    # module = importlib.import_module('111022533_hw1_4_test')
+    # agent = module.Agent() 
+    # agent.load_policy()
  
     replayBuf = ReplayBuffer(training_para.buf_size)
-    replayBuf.load('./111022533/temp/checkpoint_18.pth.tar.examples')
+    # replayBuf.load('./111022533/temp/checkpoint_18.pth.tar.examples')
 
     # mctsAgent.save_checkpoint(training_para.checkpoint_dir + f'temp.h5')  
 
     # trainer = Trainer(mctsAgent, replayBuf, training_para)
-    trainer = Trainer(agent, replayBuf, training_para)
+    trainer = Trainer(mctsAgent, replayBuf, training_para)
     trainer.train()
 
 
 
 train()
-
 
 
 
