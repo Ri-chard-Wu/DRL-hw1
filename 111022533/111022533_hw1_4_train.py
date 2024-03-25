@@ -28,28 +28,10 @@ class AttrDict(dict):
         return self[a]
 
 
-training_para = AttrDict({
-    'nEps': 10, 
-    'nEpochs': 5,
-    'nEvals': 6,
-    'evaluate_every_n': 4, 
-    'save_every_n': 5,        
-    'batch_size': 64,
-    'buf_size': 2**16,
-
-    'nSims_train': 25,
-    'nSims_eval': 25,
-
-    'nIters': 100000, 
-    'tempThreshold': 15,    
-    'checkpoint_dir': './111022533/temp/', 
-})
-
-
 # training_para = AttrDict({
-#     'nEps': 1, 
-#     'nEpochs': 1,
-#     'nEvals': 2,
+#     'nEps': 10, 
+#     'nEpochs': 5,
+#     'nEvals': 6,
 #     'evaluate_every_n': 4, 
 #     'save_every_n': 5,        
 #     'batch_size': 64,
@@ -64,6 +46,24 @@ training_para = AttrDict({
 # })
 
 
+training_para = AttrDict({
+    'nEps': 1, 
+    'nEpochs': 1,
+    'nEvals': 2,
+    'evaluate_every_n': 4, 
+    'save_every_n': 5,        
+    'batch_size': 64,
+    'buf_size': 2**16,
+
+    'nSims_train': 25,
+    'nSims_eval': 25,
+
+    'nIters': 100000, 
+    'tempThreshold': 15,    
+    'checkpoint_dir': './111022533/temp/', 
+})
+
+
 
     
 
@@ -72,9 +72,9 @@ class Game():
 
     actionSize = 64
     boardShape = (4,4,4)
-    action_decode_map = np.arange(actionSize).reshape(shape)
+    action_decode_map = np.arange(actionSize).reshape(boardShape)
 
-    def __init__(self, board=np.zeros(Game.boardShape), player=1):
+    def __init__(self, board=np.zeros(boardShape), player=1):
        
         self.t = 0
         self.board = np.copy(board)
@@ -194,7 +194,7 @@ class Game():
  
         l = []
         newB = np.reshape(board, (n*n, n))
-        newPi = np.reshape(pi, Game.shape)
+        newPi = np.reshape(pi, Game.boardShape)
         for i in range(1,5):
 
             for z in [True, False]:
@@ -206,8 +206,8 @@ class Game():
                         newB = np.flipud(newB)
                         newPi = np.flipud(newPi)
                     
-                    newB = np.reshape(newB, Game.shape)
-                    newPi = np.reshape(newPi, Game.shape)
+                    newB = np.reshape(newB, Game.boardShape)
+                    newPi = np.reshape(newPi, Game.boardShape)
                     l += [(newB, list(newPi.ravel()))]
         return l 
     
@@ -385,7 +385,7 @@ class Agent(Model):
         for i in range(self.para.nSims):
             self.search(game.duplicate())
 
-        s = Game.hash(canonBoard)
+        s = Game.encode_state(game.getCanonBoard())
         counts = [self.Nsa[s][a] if a in self.Nsa[s] else 0 for a in range(Game.actionSize)]
  
         if temp == 0: # deterministic
@@ -479,7 +479,7 @@ class Agent(Model):
         for a in self.Qsa[s].keys(): # all are valids actions.
             bound = self.Qsa[s][a] + self.para.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s] + 1e-8) / (1 + self.Nsa[s][a])
             if bound > bound_max:
-                bound_max = u
+                bound_max = bound
                 a_max = a
         
         return a_max
