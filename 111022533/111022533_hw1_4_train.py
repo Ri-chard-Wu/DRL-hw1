@@ -23,12 +23,12 @@ from copy import deepcopy
 
 
 
-class dotdict(dict):
-    def __getattr__(self, name):
-        return self[name]
+class AttrDict(dict):
+    def __getattr__(self, a):
+        return self[a]
 
 
-training_para = dotdict({
+training_para = AttrDict({
     'nEps': 10, 
     'nEpochs': 5,
     'nEvals': 6,
@@ -46,7 +46,7 @@ training_para = dotdict({
 })
 
 
-# training_para = dotdict({
+# training_para = AttrDict({
 #     'nEps': 1, 
 #     'nEpochs': 1,
 #     'nEvals': 2,
@@ -75,7 +75,8 @@ class Game():
     action_decode_map = np.arange(actionSize).reshape(shape)
 
     def __init__(self, board=np.zeros(Game.boardShape), player=1):
-        # self.reset()
+       
+        self.t = 0
         self.board = np.copy(board)
         self.player = player
 
@@ -94,18 +95,10 @@ class Game():
         else:
             self.winner = 0 
             self.done = False          
-
-
-
-    def reset(self):
-        
-        self.board = np.zeros(Game.boardShape)
-        self.player = 1
-        self.validActions = np.ones(Game.actionSize)
-
-        self.done = False
-        self.winner = 0
  
+    def getTimeStep(self):
+        return self.t
+
     def getWinner(self):
         return self.winner 
 
@@ -130,20 +123,8 @@ class Game():
     def duplicate(self):
         return deepcopy(self)
 
-    @staticmethod
-    def encode_action(a):
-        return a[0] + 4*a[1] + 16*a[2]
-
-    @staticmethod
-    def decode_action(a):
-        return np.argwhere(Game.action_decode_map==a)[0]   
-
-    @staticmethod
-    def encode_state(board):
-        return board.tostring()
-
     def step(self, a):
-        
+        assert not self.is_done()
         assert self.validActions[a]
         self.validActions[a] = 0
 
@@ -156,7 +137,21 @@ class Game():
         elif sum(self.validActions) < 0.5:
             self.done = True
         else:
-            self.player = -self.player
+            self.player = -self.player 
+        
+        self.t += 1
+
+    @staticmethod
+    def encode_action(a):
+        return a[0] + 4*a[1] + 16*a[2]
+
+    @staticmethod
+    def decode_action(a):
+        return np.argwhere(Game.action_decode_map==a)[0]   
+
+    @staticmethod
+    def encode_state(board):
+        return board.tostring()
 
     @staticmethod
     def has_winner(board): 
@@ -195,7 +190,7 @@ class Game():
     @staticmethod
     def getSymmetries(board, pi):
         # mirror, rotational
-        n = Game.shape[0]
+        n = Game.boardShape[0]
  
         l = []
         newB = np.reshape(board, (n*n, n))
@@ -217,12 +212,14 @@ class Game():
         return l 
     
  
+
+
  
-class Agent(tf.keras.Model):
+class Model(tf.keras.Model):
 
     def __init__(self):
   
-        super(Agent, self).__init__() 
+        super(Model, self).__init__() 
 
         self.act = {}
         self.bn = {}
@@ -300,7 +297,6 @@ class Agent(tf.keras.Model):
  
             total_loss = (a_loss + v_loss)
 
-  
         gradients = tape.gradient(total_loss, self.trainable_variables) 
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
     
@@ -315,7 +311,6 @@ class Agent(tf.keras.Model):
         a_prob = tf.convert_to_tensor(a_prob, dtype=tf.float32)
         v = tf.convert_to_tensor(v, dtype=tf.float32)
         a_loss, v_loss = self._train_step((x, a_prob, v))
-        # print(f'a_loss, v_loss: {a_loss}, {v_loss}')
         return a_loss.numpy(), v_loss.numpy()
         
   
@@ -332,18 +327,14 @@ class Agent(tf.keras.Model):
         K.clear_session()
         tf.keras.backend.clear_session() 
 
-        mask = game.getValidActions()
-        pi = pi * mask  
-
-        sum_Ps_s = np.sum(pi)
-        if sum_Ps_s > 0:
-            pi /= sum_Ps_s  
-        else:
-            pi = pi + valids
-            pi /= np.sum(pi)
+        valids = game.getValidActions()
+        pi = pi * valids  
+        if np.sum(pi) > 0: pi = pi / np.sum(pi)  
+        else: pi = valids / np.sum(valids)
 
         return pi, v 
  
+
     def save_checkpoint(self, path):  
         print(f'saved ckpt {path}') 
         self.save_weights(path)
@@ -357,7 +348,7 @@ class Agent(tf.keras.Model):
 
 
 
-class MCTSAgent(Agent):
+class Agent(Model):
      
     def __init__(self, para):
         super().__init__()  
@@ -373,8 +364,7 @@ class MCTSAgent(Agent):
         self.Nsa = {}  # stores #times edge s,a was visited
         self.Ns = {}  # stores #times board s was visited 
         self.Ps = {}  # stores initial policy (returned by neural net) 
-        self.Es = {}  # stores game.getGameEnded ended for board s
-       
+        
     def choose_action(self, state):
 
         player = state[0]
@@ -385,21 +375,20 @@ class MCTSAgent(Agent):
         z,y,x = Game.decode_action(a) 
         assert board[z][y][x] == 0
         return [x, y, z]
-    
- 
+     
 
     def predict(self, game, temp=1):
         """
-            canonBoard: cannot be terminal state.
+        temp: smaller is sharper (more deterministic).
         """
+
         for i in range(self.para.nSims):
-            self.search(game)
+            self.search(game.duplicate())
 
         s = Game.hash(canonBoard)
-        # counts = [self.Nsa[(s, a)] if (s, a) in self.Nsa else 0 for a in range(Game.actionSize)]
         counts = [self.Nsa[s][a] if a in self.Nsa[s] else 0 for a in range(Game.actionSize)]
  
-        if temp == 0: # yes for pit, no for train
+        if temp == 0: # deterministic
             bestAs = np.array(np.argwhere(counts == np.max(counts))).flatten()
             bestA = np.random.choice(bestAs)
             probs = [0] * len(counts)
@@ -418,13 +407,13 @@ class MCTSAgent(Agent):
         select & expand-> simulate -> backprop
         """
         trajectory, game = self.select_expand(game)
-        r = self.simulate(game) 
-        self.backprop(trajectory, r)
-
+        reward = self.simulate(game) 
+        self.backprop(trajectory, reward)
+ 
 
     def select_expand(self, game):
 
-        trajectory = []
+        trajectory = {1: [], -1: []}
         while(True):  
             
             s = Game.encode_state(game.getCanonBoard())
@@ -432,23 +421,30 @@ class MCTSAgent(Agent):
                 return trajectory, game
             
             a = self.max_a(s) 
-            trajectory.append((s, a))
+            trajectory[game.getPlayer()].append((s, a))
  
-            game.step(a) 
-          
+            game.step(a)
+
        
     def simulate(self, game):
         
-        if game.is_done(): return game.winner 
+        reward = {1: 0, -1: 0}
+
+        if game.is_done(): 
+            winner = game.getWinner() 
+            if winner != 0:
+                reward[winner] = 1
+                reward[-winner] = -1  
+            return reward          
+
+        # first visit
 
         s = Game.encode_state(game.getCanonBoard())
 
-        # first visit
         self.Ps[s], v = self._predict(game)          
         self.Qsa[s] = {}
         self.Nsa[s] = {}
 
-        # valids = Game.getValidMoves(canonBoard) 
         valids = game.getValidActions()        
         for a in range(Game.actionSize):
             if valids[a]:
@@ -456,33 +452,37 @@ class MCTSAgent(Agent):
                 self.Nsa[s][a] = 0
 
         self.Ns[s] = 0
-        
-        return v
+
+        p = game.getPlayer()
+        reward[p] = v
+        reward[-p] = -v 
+                
+        return reward
 
 
-    def backprop(self, trajectory, r):
-        for s, a in reversed(trajectory):
-            r *= -1
-            self.Qsa[s][a] = (self.Nsa[s][a] * self.Qsa[s][a] + r) / (self.Nsa[s][a] + 1)
-            self.Nsa[s][a] += 1 
-            self.Ns[s] += 1
+    def backprop(self, trajectory, reward): 
+        for player in trajectory: 
+            for s, a in reversed(trajectory[player]): 
+                self.Qsa[s][a] = (self.Nsa[s][a] * self.Qsa[s][a] + reward[player]) / (self.Nsa[s][a] + 1)
+                self.Nsa[s][a] += 1 
+                self.Ns[s] += 1
 
-
+ 
     def max_a(self, s):
         """ 
             - pick the action with the highest upper confidence bound
             - 1st term "self.Qsa[s][a]": encourage exploitation.
             - 2nd term "(...) / (1 + self.Nsa[s][a])": encourage exploration.
         """
-        cur_best = -float('inf')
-        a_best = -1        
+        bound_max = -float('inf')
+        a_max = None        
         for a in self.Qsa[s].keys(): # all are valids actions.
-            u = self.Qsa[s][a] + self.para.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s] + 1e-8) / (1 + self.Nsa[s][a])
-            if u > cur_best:
-                cur_best = u
-                a_best = a
+            bound = self.Qsa[s][a] + self.para.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s] + 1e-8) / (1 + self.Nsa[s][a])
+            if bound > bound_max:
+                bound_max = u
+                a_max = a
         
-        return a_best
+        return a_max
 
 
 
@@ -543,9 +543,9 @@ class ReplayBuffer():
  
 class Trainer():
 
-    def __init__(self, mctsAgent, replayBuf, para): 
+    def __init__(self, agent, replayBuf, para): 
 
-        self.mctsAgent = mctsAgent
+        self.agent = agent
         self.para = para
         self.replayBuf = replayBuf
 
@@ -553,20 +553,19 @@ class Trainer():
 
         examples = []
 
-        self.mctsAgent.set_n_sim(self.para.nSims_train)
+        self.agent.set_n_sim(self.para.nSims_train)
 
         for j in range(self.para.nEps): 
             
-            self.mctsAgent.reset()
+            self.agent.reset()
  
             game = Game()  
-            t = 1
             epsExamples = []  
 
-            while True:
+            while not game.is_done():
                  
-                temp = int(t < self.para.tempThreshold)  
-                pi = self.mctsAgent.predict(game, temp=temp)
+                temp = int(game.getTimeStep() < self.para.tempThreshold)  
+                pi = self.agent.predict(game, temp=temp)
  
                 sym = Game.getSymmetries(game.getCanonBoard(), pi) # data augmentation
                 for b, p in sym:
@@ -575,16 +574,14 @@ class Trainer():
                 action = np.random.choice(len(pi), p=pi)  
                 game.step(action)
            
-                t += 1
-                  
-                if game.is_done(): 
-                    winner = game.getWinner()  
-                    reward = {1: 0, -1: 0}
-                    if(winner != 0):
-                        reward[winner] = 1
-                        reward[-winner] = -1
-                    examples.extend([(x[0], x[1], reward[x[2]]) for x in epsExamples]) 
-                    break
+
+            winner = game.getWinner()  
+            reward = {1: 0, -1: 0}
+            if(winner != 0):
+                reward[winner] = 1
+                reward[-winner] = -1
+            examples.extend([(x[0], x[1], reward[x[2]]) for x in epsExamples]) 
+         
 
         return examples
         
@@ -600,7 +597,7 @@ class Trainer():
             self.replayBuf.addExamples(self.collectExamples())  
             examples = self.replayBuf.sample()
             
-            self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + f'temp.h5')  
+            self.agent.save_checkpoint(self.para.checkpoint_dir + f'temp.h5')  
 
             print('training...')            
             a_losses = []
@@ -609,8 +606,8 @@ class Trainer():
             for epoch in range(self.para.nEpochs):     
                 for j in range(n):
                     batch = examples[j*self.para.batch_size:(j+1)*self.para.batch_size] 
-                    a_loss, v_loss = self.mctsAgent.train_step(batch)
-                    # self.mctsAgent.train_step(batch)
+                    a_loss, v_loss = self.agent.train_step(batch)
+                    # self.agent.train_step(batch)
                     a_losses.append(a_loss)
                     v_losses.append(v_loss)
             print(f'a_loss: {np.mean(a_losses)}, v_loss: {np.mean(v_losses)}')
@@ -618,7 +615,7 @@ class Trainer():
 
             if i % self.para.save_every_n == 0:
                 self.replayBuf.save(self.para.checkpoint_dir + f'checkpoint_{i}.pth.tar.examples')
-                self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + f'checkpoint_{i}.h5')        
+                self.agent.save_checkpoint(self.para.checkpoint_dir + f'checkpoint_{i}.h5')        
  
             if i % self.para.evaluate_every_n == 0: 
                 self.evaluate(self.para.nEvals)
@@ -632,16 +629,16 @@ class Trainer():
 
         mid = int(num / 2) 
         
-        pnet = MCTSAgent(dotdict({'nSims': self.para.nSims_eval, 'cpuct':1.0})) 
+        pnet = Agent(AttrDict({'nSims': self.para.nSims_eval, 'cpuct':1.0})) 
         pnet.load_checkpoint(self.para.checkpoint_dir + f'temp.h5')                        
   
-        self.mctsAgent.set_n_sim(self.para.nSims_eval)
+        self.agent.set_n_sim(self.para.nSims_eval)
 
         for i in range(1, num+1) :
 
-            self.mctsAgent.reset()
+            self.agent.reset()
             pnet.reset()
-            players = {1: self.mctsAgent, -1: pnet} 
+            players = {1: self.agent, -1: pnet} 
             
             scores = {1: 0, -1: 0, 0: 0}
 
@@ -662,9 +659,9 @@ class Trainer():
 
 
         if scores[1] + scores[-1] == 0 or float(scores[1]) / (scores[1] + scores[-1]) < 0.5:
-            self.mctsAgent.load_checkpoint(self.para.checkpoint_dir + f'temp.h5')
+            self.agent.load_checkpoint(self.para.checkpoint_dir + f'temp.h5')
         else:
-            self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + 'best.h5')
+            self.agent.save_checkpoint(self.para.checkpoint_dir + 'best.h5')
 
 
     # def evaluate(self, num=10):
@@ -676,13 +673,13 @@ class Trainer():
     #     twoWon = 0
     #     draws = 0
         
-    #     self.mctsAgent.set_n_sim(self.para.nSims_eval)
+    #     self.agent.set_n_sim(self.para.nSims_eval)
 
     #     for i in range(1, num+1) :
 
-    #         self.mctsAgent.reset()
+    #         self.agent.reset()
             
-    #         players = {1: self.mctsAgent, -1: RandomPlayer()}
+    #         players = {1: self.agent, -1: RandomPlayer()}
 
 
     #         if(i < mid): curPlayer = 1
@@ -719,14 +716,14 @@ class Trainer():
 def train(): 
 
 
-    agent_para = dotdict({   
+    agent_para = AttrDict({   
         'nSims': 25,  
         'cpuct':1.0
     })
  
-    mctsAgent = MCTSAgent(agent_para)
-    # mctsAgent.load_checkpoint('./temp/checkpoint_18.h5')
-    # mctsAgent.load_checkpoint('./111022533/temp/checkpoint_25.h5')
+    agent = Agent(agent_para)
+    # agent.load_checkpoint('./temp/checkpoint_18.h5')
+    # agent.load_checkpoint('./111022533/temp/checkpoint_25.h5')
  
     # module = importlib.import_module('111022533_hw1_4_test')
     # agent = module.Agent() 
@@ -735,10 +732,10 @@ def train():
     replayBuf = ReplayBuffer(training_para.buf_size)
     # replayBuf.load('./111022533/temp/checkpoint_25.pth.tar.examples')
 
-    # mctsAgent.save_checkpoint(training_para.checkpoint_dir + f'temp.h5')  
+    # agent.save_checkpoint(training_para.checkpoint_dir + f'temp.h5')  
 
-    # trainer = Trainer(mctsAgent, replayBuf, training_para)
-    trainer = Trainer(mctsAgent, replayBuf, training_para)
+    # trainer = Trainer(agent, replayBuf, training_para)
+    trainer = Trainer(agent, replayBuf, training_para)
     trainer.train()
 
 
