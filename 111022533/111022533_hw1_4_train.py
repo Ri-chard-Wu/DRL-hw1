@@ -28,28 +28,10 @@ class AttrDict(dict):
         return self[a]
 
 
-# training_para = AttrDict({
-#     'nEps': 10, 
-#     'nEpochs': 5,
-#     'nEvals': 6,
-#     'evaluate_every_n': 4, 
-#     'save_every_n': 5,        
-#     'batch_size': 64,
-#     'buf_size': 2**16,
-
-#     'nSims_train': 25,
-#     'nSims_eval': 25,
-
-#     'nIters': 100000, 
-#     'tempThreshold': 15,    
-#     'checkpoint_dir': './111022533/temp/', 
-# })
-
-
 training_para = AttrDict({
-    'nEps': 1, 
-    'nEpochs': 1,
-    'nEvals': 2,
+    'nEps': 10, 
+    'nEpochs': 5,
+    'nEvals': 6,
     'evaluate_every_n': 4, 
     'save_every_n': 5,        
     'batch_size': 64,
@@ -62,6 +44,24 @@ training_para = AttrDict({
     'tempThreshold': 15,    
     'checkpoint_dir': './111022533/temp/', 
 })
+
+
+# training_para = AttrDict({
+#     'nEps': 1, 
+#     'nEpochs': 1,
+#     'nEvals': 2,
+#     'evaluate_every_n': 4, 
+#     'save_every_n': 5,        
+#     'batch_size': 64,
+#     'buf_size': 2**16,
+
+#     'nSims_train': 25,
+#     'nSims_eval': 25,
+
+#     'nIters': 100000, 
+#     'tempThreshold': 15,    
+#     'checkpoint_dir': './111022533/temp/', 
+# })
 
 
 
@@ -114,7 +114,7 @@ class Game():
     def getBoard(self):
         return np.copy(self.board)
     
-    def getCanonBoard(self):
+    def getPrimeBoard(self):
         return np.copy(self.board) * self.player
 
     def getValidActions(self):
@@ -316,7 +316,7 @@ class Model(tf.keras.Model):
   
     def _predict(self, game): 
 
-        board = game.getCanonBoard()
+        board = game.getPrimeBoard()
         board = board[np.newaxis, :, :] 
         board = tf.convert_to_tensor(board, dtype=tf.float32) 
         pi, v = self(board) 
@@ -385,7 +385,7 @@ class Agent(Model):
         for i in range(self.para.nSims):
             self.search(game.duplicate())
 
-        s = Game.encode_state(game.getCanonBoard())
+        s = Game.encode_state(game.getPrimeBoard())
         counts = [self.Nsa[s][a] if a in self.Nsa[s] else 0 for a in range(Game.actionSize)]
  
         if temp == 0: # deterministic
@@ -416,7 +416,7 @@ class Agent(Model):
         trajectory = {1: [], -1: []}
         while(True):  
             
-            s = Game.encode_state(game.getCanonBoard())
+            s = Game.encode_state(game.getPrimeBoard())
             if s not in self.Ps: # terminal or first visit.
                 return trajectory, game
             
@@ -439,7 +439,7 @@ class Agent(Model):
 
         # first visit
 
-        s = Game.encode_state(game.getCanonBoard())
+        s = Game.encode_state(game.getPrimeBoard())
 
         self.Ps[s], v = self._predict(game)          
         self.Qsa[s] = {}
@@ -487,7 +487,7 @@ class Agent(Model):
 
 
 
-class RandomPlayer():
+class RandomAgent():
     
     def choose_action(self, state):
         
@@ -567,7 +567,7 @@ class Trainer():
                 temp = int(game.getTimeStep() < self.para.tempThreshold)  
                 pi = self.agent.predict(game, temp=temp)
  
-                sym = Game.getSymmetries(game.getCanonBoard(), pi) # data augmentation
+                sym = Game.getSymmetries(game.getPrimeBoard(), pi) # data augmentation
                 for b, p in sym:
                     epsExamples.append([b, p, game.getPlayer()])
 
@@ -634,13 +634,13 @@ class Trainer():
   
         self.agent.set_n_sim(self.para.nSims_eval)
 
+        scores = {1: 0, -1: 0, 0: 0}
+
         for i in range(1, num+1) :
 
             self.agent.reset()
             pnet.reset()
-            players = {1: self.agent, -1: pnet} 
-            
-            scores = {1: 0, -1: 0, 0: 0}
+            players = {1: self.agent, -1: pnet}  
 
             if(i < mid): game = Game(player = 1) 
             else: game = Game(player = -1) 
@@ -679,29 +679,29 @@ class Trainer():
 
     #         self.agent.reset()
             
-    #         players = {1: self.agent, -1: RandomPlayer()}
+    #         players = {1: self.agent, -1: RandomAgent()}
 
 
     #         if(i < mid): curPlayer = 1
     #         else: curPlayer = -1
             
-    #         canonBoard = Game.getInitBoard()
+    #         PrimeBoard = Game.getInitBoard()
         
-    #         while Game.getGameEnded(canonBoard) == 0:
+    #         while Game.getGameEnded(PrimeBoard) == 0:
                 
-    #             board = canonBoard * curPlayer
+    #             board = PrimeBoard * curPlayer
     #             state = np.hstack((np.array([curPlayer]), board.reshape(Game.actionSize)))
 
     #             a = players[curPlayer].choose_action(state) 
     #             actionId = a[0] + 4*a[1] + 16*a[2]
-    #             valids = Game.getValidMoves(canonBoard)
+    #             valids = Game.getValidMoves(PrimeBoard)
                 
     #             assert valids[actionId] > 0
     
-    #             canonBoard = Game.getNextState(canonBoard, actionId) 
+    #             PrimeBoard = Game.getNextState(PrimeBoard, actionId) 
     #             curPlayer = -curPlayer
 
-    #         r = curPlayer * Game.getGameEnded(canonBoard)
+    #         r = curPlayer * Game.getGameEnded(PrimeBoard)
                         
     #         if r == 1: oneWon += 1
     #         elif r == -1: twoWon += 1
@@ -740,7 +740,46 @@ def train():
 
 
 
-train()
+# train()
 
 
 
+
+        
+
+def evaluate(num=10):
+    
+    print('pitting random model...')
+
+    mid = int(num / 2) 
+ 
+    agent = Agent(AttrDict({   
+        'nSims': 50,  
+        'cpuct':1.0
+    }))
+    agent.load_checkpoint('./111022533/temp/checkpoint_45.h5')
+    
+    scores = {1: 0, -1: 0, 0: 0}
+
+    for i in range(1, num+1) :
+
+        agent.reset()
+        players = {1: agent, -1: RandomAgent()}  
+
+        if(i < mid): game = Game(player = 1) 
+        else: game = Game(player = -1) 
+            
+        while not game.is_done():
+            action = players[game.getPlayer()].choose_action(game.getState())   
+            a = Game.encode_action(action)
+            valids = game.getValidActions()
+            assert valids[a] > 0
+            game.step(a)
+
+        winner = game.getWinner()
+        scores[winner] += 1 
+
+        print(f'[{i}/{num}] pwins: {scores[1]}, nwins: {scores[-1]}, draws: {scores[0]}') 
+
+ 
+evaluate()
