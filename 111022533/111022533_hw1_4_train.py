@@ -18,6 +18,11 @@ import tensorflow.keras.backend as K
 import tensorflow as tf
 from pickle import Pickler, Unpickler
 
+
+from copy import deepcopy
+
+
+
 class dotdict(dict):
     def __getattr__(self, name):
         return self[name]
@@ -63,233 +68,504 @@ training_para = dotdict({
 
 
    
-class Game():
-    actionSize = 64
-    shape = (4,4,4)
-    coord2actionId = np.arange(actionSize).reshape(shape)
+# class Game():
+#     actionSize = 64
+#     shape = (4,4,4)
+#     coord2actionId = np.arange(actionSize).reshape(shape)
   
-    @staticmethod
-    def getInitBoard(): 
-        return np.zeros(Game.shape)
+#     @staticmethod
+#     def getInitBoard(): 
+#         return np.zeros(Game.shape)
  
-    @staticmethod
-    def getNextState(canonBoard, action): 
+#     @staticmethod
+#     def getNextState(canonBoard, action): 
  
-        board = np.copy(canonBoard) 
-        (z,y,x) = np.argwhere(Game.coord2actionId==action)[0]         
-        assert board[z][y][x] == 0
-        board[z][y][x] = 1
+#         board = np.copy(canonBoard) 
+#         (z,y,x) = np.argwhere(Game.coord2actionId==action)[0]         
+#         assert board[z][y][x] == 0
+#         board[z][y][x] = 1
  
-        return -1*board # flip to canon for next player
+#         return -1*board # flip to canon for next player
 
 
-    @staticmethod
-    def getValidMoves(canonBoard):
+#     @staticmethod
+#     def getValidMoves(canonBoard):
         
-        valids = [0]*Game.actionSize   
-        n = Game.shape[0] 
+#         valids = [0]*Game.actionSize   
+#         n = Game.shape[0] 
 
-        moves = [] 
-        for z in range(n): 
-            for y in range(n):
-                for x in range(n):
-                    if canonBoard[z][y][x]==0: 
-                        moves.append((z,y,x))
+#         moves = [] 
+#         for z in range(n): 
+#             for y in range(n):
+#                 for x in range(n):
+#                     if canonBoard[z][y][x]==0: 
+#                         moves.append((z,y,x))
         
-        for z, y, x in moves:
-            valids[Game.coord2actionId[z][y][x]] = 1
+#         for z, y, x in moves:
+#             valids[Game.coord2actionId[z][y][x]] = 1
 
-        return np.array(valids)
+#         return np.array(valids)
 
-    @staticmethod
-    def getGameEnded(canonBoard):       
+#     @staticmethod
+#     def getGameEnded(canonBoard):       
 
-        if Game.is_win(canonBoard):
-            return 1
+#         if Game.is_win(canonBoard):
+#             return 1
         
-        if Game.is_win(-1*canonBoard):
-            return -1
+#         if Game.is_win(-1*canonBoard):
+#             return -1
 
-        if Game.has_legal_moves(canonBoard):
-            return 0
+#         if Game.has_legal_moves(canonBoard):
+#             return 0
 
-        # draw has a very little value 
-        return 1e-4
+#         # draw has a very little value 
+#         return 1e-4
 
-    @staticmethod
-    def has_legal_moves(board):
-        n = Game.shape[0]
-        for z in range(n):
-            for y in range(n):
-                for x in range(n):
-                    if board[z][x][y]==0:
-                        return True
-        return False
+#     @staticmethod
+#     def has_legal_moves(board):
+#         n = Game.shape[0]
+#         for z in range(n):
+#             for y in range(n):
+#                 for x in range(n):
+#                     if board[z][x][y]==0:
+#                         return True
+#         return False
 
 
-    @staticmethod
-    def is_win(canonBoard): 
+#     @staticmethod
+#     def is_win(canonBoard): 
 
-        n = Game.shape[0]
-        win = n
+#         n = Game.shape[0]
+#         win = n
 
-        # check z-dimension
-        for z in range(n):
-            for y in range(n):
-                count = 0
-                for x in range(n):
-                    if canonBoard[z,x,y]==1:
-                        count += 1
-                if count==win:
-                    return True
+#         # check z-dimension
+#         for z in range(n):
+#             for y in range(n):
+#                 count = 0
+#                 for x in range(n):
+#                     if canonBoard[z,x,y]==1:
+#                         count += 1
+#                 if count==win:
+#                     return True
 
-        for z in range(n):
-            for x in range(n):
-                count = 0
-                for y in range(n):
-                    if canonBoard[z,x,y]==1:
-                        count += 1
-                if count==win:
-                    return True
+#         for z in range(n):
+#             for x in range(n):
+#                 count = 0
+#                 for y in range(n):
+#                     if canonBoard[z,x,y]==1:
+#                         count += 1
+#                 if count==win:
+#                     return True
         
-        # check x dimension
-        for x in range(n):
-            for z in range(n):
-                count = 0
-                for y in range(n):
-                    if canonBoard[z,x,y]==1:
-                        count += 1
-                if count==win:
-                    return True
+#         # check x dimension
+#         for x in range(n):
+#             for z in range(n):
+#                 count = 0
+#                 for y in range(n):
+#                     if canonBoard[z,x,y]==1:
+#                         count += 1
+#                 if count==win:
+#                     return True
 
-        for x in range(n):
-            for y in range(n):
-                count = 0
-                for z in range(n):
-                    if canonBoard[z,x,y]==1:
-                        count += 1
-                if count==win:
-                    return True
+#         for x in range(n):
+#             for y in range(n):
+#                 count = 0
+#                 for z in range(n):
+#                     if canonBoard[z,x,y]==1:
+#                         count += 1
+#                 if count==win:
+#                     return True
 
-        # check y dimension
-        for y in range(n):
-            for x in range(n):
-                count = 0
-                for z in range(n):
-                    if canonBoard[z,x,y]==1:
-                        count += 1
-                if count==win:
-                    return True
+#         # check y dimension
+#         for y in range(n):
+#             for x in range(n):
+#                 count = 0
+#                 for z in range(n):
+#                     if canonBoard[z,x,y]==1:
+#                         count += 1
+#                 if count==win:
+#                     return True
         
-        for y in range(n):
-            for z in range(n):
-                count = 0
-                for x in range(n):
-                    if canonBoard[z,x,y]==1:
-                        count += 1
-                if count==win:
-                    return True
+#         for y in range(n):
+#             for z in range(n):
+#                 count = 0
+#                 for x in range(n):
+#                     if canonBoard[z,x,y]==1:
+#                         count += 1
+#                 if count==win:
+#                     return True
         
-        # check flat diagonals
-        # check z dimension
-        for z in range(n):
-            count = 0
-            for d in range(n):
-                if canonBoard[z,d,d]==1:
-                    count += 1
-            if count==win:
-                return True
+#         # check flat diagonals
+#         # check z dimension
+#         for z in range(n):
+#             count = 0
+#             for d in range(n):
+#                 if canonBoard[z,d,d]==1:
+#                     count += 1
+#             if count==win:
+#                 return True
         
       
-        for z in range(n):
-            count = 0
-            for d in range(n):
-                if canonBoard[z,d,n-d-1]==1:
-                    count += 1
-            if count==win:
-                return True
+#         for z in range(n):
+#             count = 0
+#             for d in range(n):
+#                 if canonBoard[z,d,n-d-1]==1:
+#                     count += 1
+#             if count==win:
+#                 return True
 
-        # check x dimension 
-        for x in range(n):
-            count = 0
-            for d in range(n):
-                if canonBoard[d,x,d]==1:
-                    count += 1
-            if count==win:
-                return True
+#         # check x dimension 
+#         for x in range(n):
+#             count = 0
+#             for d in range(n):
+#                 if canonBoard[d,x,d]==1:
+#                     count += 1
+#             if count==win:
+#                 return True
  
-        for x in range(n):
-            count = 0
-            for d in range(n):
-                if canonBoard[d,x,n-d-1]==1:
-                    count += 1
-            if count==win:
-                return True
+#         for x in range(n):
+#             count = 0
+#             for d in range(n):
+#                 if canonBoard[d,x,n-d-1]==1:
+#                     count += 1
+#             if count==win:
+#                 return True
 
-        # check y dimension 
-        for y in range(n):
-            count = 0
-            for d in range(n):
-                if canonBoard[d,d,y]==1:
-                    count += 1
-            if count==win:
-                return True
+#         # check y dimension 
+#         for y in range(n):
+#             count = 0
+#             for d in range(n):
+#                 if canonBoard[d,d,y]==1:
+#                     count += 1
+#             if count==win:
+#                 return True
 
        
-        for y in range(n):
-            count = 0
-            for d in range(n):
-                if canonBoard[n-d-1,d,y]==1:
-                    count += 1
-            if count==win:
-                return True
+#         for y in range(n):
+#             count = 0
+#             for d in range(n):
+#                 if canonBoard[n-d-1,d,y]==1:
+#                     count += 1
+#             if count==win:
+#                 return True
         
-        # check 4 true diagonals
-        count = 0
-        if canonBoard[0,0,0] == 1:
-            count += 1
-            if canonBoard[1,1,1] == 1:
-                count += 1
-                if canonBoard[2,2,2] == 1:
-                    count += 1
-                    if count == win:
-                        return True
+#         # check 4 true diagonals
+#         count = 0
+#         if canonBoard[0,0,0] == 1:
+#             count += 1
+#             if canonBoard[1,1,1] == 1:
+#                 count += 1
+#                 if canonBoard[2,2,2] == 1:
+#                     count += 1
+#                     if count == win:
+#                         return True
             
-        count = 0
-        if canonBoard[2,0,0] == 1:
-            count += 1
-            if canonBoard[1,1,1] == 1:
-                count += 1
-                if canonBoard[0,2,2] == 1:
-                    count += 1
-                    if count == win:
-                        return True
+#         count = 0
+#         if canonBoard[2,0,0] == 1:
+#             count += 1
+#             if canonBoard[1,1,1] == 1:
+#                 count += 1
+#                 if canonBoard[0,2,2] == 1:
+#                     count += 1
+#                     if count == win:
+#                         return True
         
-        count = 0
-        if canonBoard[2,2,0] == 1:
-            count += 1
-            if canonBoard[1,1,1] == 1:
-                count += 1
-                if canonBoard[0,0,2] == 1:
-                    count += 1
-                    if count == win:
-                        return True
+#         count = 0
+#         if canonBoard[2,2,0] == 1:
+#             count += 1
+#             if canonBoard[1,1,1] == 1:
+#                 count += 1
+#                 if canonBoard[0,0,2] == 1:
+#                     count += 1
+#                     if count == win:
+#                         return True
         
-        count = 0
-        if canonBoard[0,2,0] == 1:
-            count += 1
-            if canonBoard[1,1,1] == 1:
-                count += 1
-                if canonBoard[2,0,2] == 1:
-                    count += 1
-                    if count == win:
-                        return True
+#         count = 0
+#         if canonBoard[0,2,0] == 1:
+#             count += 1
+#             if canonBoard[1,1,1] == 1:
+#                 count += 1
+#                 if canonBoard[2,0,2] == 1:
+#                     count += 1
+#                     if count == win:
+#                         return True
 
-        # return false if no 3 is reached
+#         # return false if no 3 is reached
+#         return False
+
+
+#     @staticmethod
+#     def getSymmetries(board, pi):
+#         # mirror, rotational
+#         n = Game.shape[0]
+ 
+#         l = []
+#         newB = np.reshape(board, (n*n, n))
+#         newPi = np.reshape(pi, Game.shape)
+#         for i in range(1,5):
+
+#             for z in [True, False]:
+#                 for j in [True, False]:
+#                     if j:
+#                         newB = np.fliplr(newB)
+#                         newPi = np.fliplr(newPi)
+#                     if z:
+#                         newB = np.flipud(newB)
+#                         newPi = np.flipud(newPi)
+                    
+#                     newB = np.reshape(newB, Game.shape)
+#                     newPi = np.reshape(newPi, Game.shape)
+#                     l += [(newB, list(newPi.ravel()))]
+#         return l 
+    
+
+#     @staticmethod
+#     def hash(board): 
+#         return board.tostring()
+ 
+
+
+   
+class Game():
+
+    actionSize = 64
+    boardShape = (4,4,4)
+    action_decode_map = np.arange(actionSize).reshape(shape)
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        
+        self.board = np.zeros(Game.boardShape)
+        
+        self.done = False
+        self.winner = 0
+
+        self.player = 1
+        self.validActions = np.ones(Game.actionSize)
+         
+    def duplicate(self):
+        return deepcopy(self)
+
+    def decode_action(self, a):
+        return np.argwhere(Game.action_decode_map==a)[0]   
+
+    def step(self, a):
+ 
+        assert self.validActions[a]
+        self.validActions[a] = 0
+
+        (z,y,x) = self.decode_action(a)    
+        self.board[z][y][x] = self.player
+                
+        if self.has_winner():
+            self.winner = self.player
+            self.done = True
+        elif sum(self.validActions) < 0.5:
+            self.done = True
+        else:
+            self.player = -self.player
+
+
+    def has_winner(self): 
+
+        n = Game.boardShape[0]
+
+        def reduce(v): return int(abs(sum(v)))
+   
+        for z in range(n):
+            for y in range(n):                
+                if(reduce(self.board[z,y,:]) == n): return True 
+        for z in range(n):
+            for x in range(n):                
+                if(reduce(self.board[z,:,x]) == n): return True 
+        for y in range(n):
+            for x in range(n):                
+                if(reduce(self.board[:,y,x]) == n): return True
+ 
+        for z in range(n):
+            if(reduce([self.board[z,i,i] for i in range(4)]) == n): return True
+            if(reduce([self.board[z,i,n-i-1] for i in range(4)]) == n): return True            
+        for y in range(n):
+            if(reduce([self.board[i,y,i] for i in range(4)]) == n): return True
+            if(reduce([self.board[i,y,n-i-1] for i in range(4)]) == n): return True            
+        for x in range(n):
+            if(reduce([self.board[i,i,x] for i in range(4)]) == n): return True
+            if(reduce([self.board[n-i-1,i,x] for i in range(4)]) == n): return True
+
+        if(reduce([self.board[i,i,i] for i in range(4)]) == n): return True
+        if(reduce([self.board[n-i-1,i,i] for i in range(4)]) == n): return True
+        if(reduce([self.board[n-i-1,n-i-1,i] for i in range(4)]) == n): return True
+        if(reduce([self.board[i,n-i-1,i] for i in range(4)]) == n): return True
+            
         return False
 
 
-    @staticmethod
+
+
+ 
+    # def has_winner(self): 
+
+    #     n = Game.shape[0]
+    #     win = n
+
+    #     # check z-dimension
+    #     for z in range(n):
+    #         for y in range(n):
+    #             count = 0
+    #             for x in range(n):
+    #                 if canonBoard[z,x,y]==1:
+    #                     count += 1
+    #             if count==win:
+    #                 return True
+
+    #     for z in range(n):
+    #         for x in range(n):
+    #             count = 0
+    #             for y in range(n):
+    #                 if canonBoard[z,x,y]==1:
+    #                     count += 1
+    #             if count==win:
+    #                 return True
+        
+    #     # check x dimension
+    #     for x in range(n):
+    #         for z in range(n):
+    #             count = 0
+    #             for y in range(n):
+    #                 if canonBoard[z,x,y]==1:
+    #                     count += 1
+    #             if count==win:
+    #                 return True
+
+    #     for x in range(n):
+    #         for y in range(n):
+    #             count = 0
+    #             for z in range(n):
+    #                 if canonBoard[z,x,y]==1:
+    #                     count += 1
+    #             if count==win:
+    #                 return True
+
+    #     # check y dimension
+    #     for y in range(n):
+    #         for x in range(n):
+    #             count = 0
+    #             for z in range(n):
+    #                 if canonBoard[z,x,y]==1:
+    #                     count += 1
+    #             if count==win:
+    #                 return True
+        
+    #     for y in range(n):
+    #         for z in range(n):
+    #             count = 0
+    #             for x in range(n):
+    #                 if canonBoard[z,x,y]==1:
+    #                     count += 1
+    #             if count==win:
+    #                 return True
+        
+    #     # check flat diagonals
+    #     # check z dimension
+    #     for z in range(n):
+    #         count = 0
+    #         for d in range(n):
+    #             if canonBoard[z,d,d]==1:
+    #                 count += 1
+    #         if count==win:
+    #             return True
+        
+      
+    #     for z in range(n):
+    #         count = 0
+    #         for d in range(n):
+    #             if canonBoard[z,d,n-d-1]==1:
+    #                 count += 1
+    #         if count==win:
+    #             return True
+
+    #     # check x dimension 
+    #     for x in range(n):
+    #         count = 0
+    #         for d in range(n):
+    #             if canonBoard[d,x,d]==1:
+    #                 count += 1
+    #         if count==win:
+    #             return True
+ 
+    #     for x in range(n):
+    #         count = 0
+    #         for d in range(n):
+    #             if canonBoard[d,x,n-d-1]==1:
+    #                 count += 1
+    #         if count==win:
+    #             return True
+
+    #     # check y dimension 
+    #     for y in range(n):
+    #         count = 0
+    #         for d in range(n):
+    #             if canonBoard[d,d,y]==1:
+    #                 count += 1
+    #         if count==win:
+    #             return True
+
+       
+    #     for y in range(n):
+    #         count = 0
+    #         for d in range(n):
+    #             if canonBoard[n-d-1,d,y]==1:
+    #                 count += 1
+    #         if count==win:
+    #             return True
+        
+    #     # check 4 true diagonals
+    #     count = 0
+    #     if canonBoard[0,0,0] == 1:
+    #         count += 1
+    #         if canonBoard[1,1,1] == 1:
+    #             count += 1
+    #             if canonBoard[2,2,2] == 1:
+    #                 count += 1
+    #                 if count == win:
+    #                     return True
+            
+    #     count = 0
+    #     if canonBoard[2,0,0] == 1:
+    #         count += 1
+    #         if canonBoard[1,1,1] == 1:
+    #             count += 1
+    #             if canonBoard[0,2,2] == 1:
+    #                 count += 1
+    #                 if count == win:
+    #                     return True
+        
+    #     count = 0
+    #     if canonBoard[2,2,0] == 1:
+    #         count += 1
+    #         if canonBoard[1,1,1] == 1:
+    #             count += 1
+    #             if canonBoard[0,0,2] == 1:
+    #                 count += 1
+    #                 if count == win:
+    #                     return True
+        
+    #     count = 0
+    #     if canonBoard[0,2,0] == 1:
+    #         count += 1
+    #         if canonBoard[1,1,1] == 1:
+    #             count += 1
+    #             if canonBoard[2,0,2] == 1:
+    #                 count += 1
+    #                 if count == win:
+    #                     return True
+
+    #     # return false if no 3 is reached
+    #     return False
+
+ 
     def getSymmetries(board, pi):
         # mirror, rotational
         n = Game.shape[0]
@@ -330,7 +606,7 @@ class Agent(tf.keras.Model):
         self.bn = {}
         self.conv = {}    
         padding = ['same', 'same', 'valid']
-        n_filter = 256
+        n_filter = 128
 
         for i in range(3):
             self.act[i] = tf.keras.layers.Activation('relu')
@@ -706,6 +982,8 @@ class Trainer():
             self.replayBuf.addExamples(self.collectExamples())  
             examples = self.replayBuf.sample()
             
+            self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + f'temp.h5')  
+
             print('training...')            
             a_losses = []
             v_losses = []
@@ -730,79 +1008,27 @@ class Trainer():
 
                
 
-    # def evaluate(self, num=10):
-        
-    #     print('pitting old model...')
-
-    #     mid = int(num / 2)
-    #     oneWon = 0
-    #     twoWon = 0
-    #     draws = 0
-        
-    #     self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + f'temp.h5')                 
-    #     pnet = MCTSAgent(dotdict({'nSims': self.para.nSims_eval, 'cpuct':1.0})) 
-    #     # pnet = self.mctsAgent.__class__(dotdict({'nSims': self.para.nSims_eval, 'cpuct':1.0}))
-    #     pnet.load_checkpoint(self.para.checkpoint_dir + f'temp.h5')                        
-  
-    #     self.mctsAgent.set_n_sim(self.para.nSims_eval)
-
-    #     for i in range(1, num+1) :
-
-    #         self.mctsAgent.reset()
-    #         pnet.reset()
-    #         players = {1: self.mctsAgent, -1: pnet}
-
-
-    #         if(i < mid): curPlayer = 1
-    #         else: curPlayer = -1
-            
-    #         canonBoard = Game.getInitBoard()
-        
-    #         while Game.getGameEnded(canonBoard) == 0:
-                
-    #             board = canonBoard * curPlayer
-    #             state = np.hstack((np.array([curPlayer]), board.reshape(Game.actionSize)))
-
-    #             a = players[curPlayer].choose_action(state) 
-    #             actionId = a[0] + 4*a[1] + 16*a[2]
-    #             valids = Game.getValidMoves(canonBoard)
-                
-    #             assert valids[actionId] > 0
-    
-    #             canonBoard = Game.getNextState(canonBoard, actionId) 
-    #             curPlayer = -curPlayer
-
-    #         r = curPlayer * Game.getGameEnded(canonBoard)
-                        
-    #         if r == 1: oneWon += 1
-    #         elif r == -1: twoWon += 1
-    #         else: draws += 1       
-
-    #         print(f'[{i}/{num}] pwins: {oneWon}, nwins: {twoWon}, draws: {draws}') 
-
-
-    #     if twoWon + oneWon == 0 or float(oneWon) / (twoWon + oneWon) < 0.5:
-    #         self.mctsAgent.load_checkpoint(self.para.checkpoint_dir + f'temp.h5')
-    #     else:
-    #         self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + 'best.h5')
-
-
     def evaluate(self, num=10):
         
-        print('pitting random model...')
+        print('pitting old model...')
 
         mid = int(num / 2)
         oneWon = 0
         twoWon = 0
         draws = 0
         
+        # self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + f'temp.h5')                 
+        pnet = MCTSAgent(dotdict({'nSims': self.para.nSims_eval, 'cpuct':1.0})) 
+        # pnet = self.mctsAgent.__class__(dotdict({'nSims': self.para.nSims_eval, 'cpuct':1.0}))
+        pnet.load_checkpoint(self.para.checkpoint_dir + f'temp.h5')                        
+  
         self.mctsAgent.set_n_sim(self.para.nSims_eval)
 
         for i in range(1, num+1) :
 
             self.mctsAgent.reset()
-            
-            players = {1: self.mctsAgent, -1: RandomPlayer()}
+            pnet.reset()
+            players = {1: self.mctsAgent, -1: pnet}
 
 
             if(i < mid): curPlayer = 1
@@ -831,6 +1057,58 @@ class Trainer():
             else: draws += 1       
 
             print(f'[{i}/{num}] pwins: {oneWon}, nwins: {twoWon}, draws: {draws}') 
+
+
+        if twoWon + oneWon == 0 or float(oneWon) / (twoWon + oneWon) < 0.5:
+            self.mctsAgent.load_checkpoint(self.para.checkpoint_dir + f'temp.h5')
+        else:
+            self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + 'best.h5')
+
+
+    # def evaluate(self, num=10):
+        
+    #     print('pitting random model...')
+
+    #     mid = int(num / 2)
+    #     oneWon = 0
+    #     twoWon = 0
+    #     draws = 0
+        
+    #     self.mctsAgent.set_n_sim(self.para.nSims_eval)
+
+    #     for i in range(1, num+1) :
+
+    #         self.mctsAgent.reset()
+            
+    #         players = {1: self.mctsAgent, -1: RandomPlayer()}
+
+
+    #         if(i < mid): curPlayer = 1
+    #         else: curPlayer = -1
+            
+    #         canonBoard = Game.getInitBoard()
+        
+    #         while Game.getGameEnded(canonBoard) == 0:
+                
+    #             board = canonBoard * curPlayer
+    #             state = np.hstack((np.array([curPlayer]), board.reshape(Game.actionSize)))
+
+    #             a = players[curPlayer].choose_action(state) 
+    #             actionId = a[0] + 4*a[1] + 16*a[2]
+    #             valids = Game.getValidMoves(canonBoard)
+                
+    #             assert valids[actionId] > 0
+    
+    #             canonBoard = Game.getNextState(canonBoard, actionId) 
+    #             curPlayer = -curPlayer
+
+    #         r = curPlayer * Game.getGameEnded(canonBoard)
+                        
+    #         if r == 1: oneWon += 1
+    #         elif r == -1: twoWon += 1
+    #         else: draws += 1       
+
+    #         print(f'[{i}/{num}] pwins: {oneWon}, nwins: {twoWon}, draws: {draws}') 
  
 
 def train(): 
