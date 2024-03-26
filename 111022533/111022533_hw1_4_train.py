@@ -23,12 +23,30 @@ from copy import deepcopy
 
 
 
-class AttrDict(dict):
-    def __getattr__(self, a):
-        return self[a]
+class dotdict(dict):
+    def __getattr__(self, name):
+        return self[name]
+
+# training_para = dotdict({
+#     'nEps': 25, 
+#     'nEpochs': 8,
+#     'nEvals': 10,
+#     'evaluate_every_n': 1,  
+#     'save_every_n': 4,        
+#     'batch_size': 64,
+#     'buf_size': 2**16,
+
+#     'nSims_train': 25,
+#     'nSims_eval': 25,
+
+#     'nIters': 100000, 
+#     'tempThreshold': 10,   
+#     'checkpoint_dir': './111022533/temp/', 
+# })
 
 
-training_para = AttrDict({
+
+training_para = dotdict({
     'nEps': 10, 
     'nEpochs': 5,
     'nEvals': 6,
@@ -46,155 +64,322 @@ training_para = AttrDict({
 })
 
 
-# training_para = AttrDict({
-#     'nEps': 1, 
-#     'nEpochs': 1,
-#     'nEvals': 2,
-#     'evaluate_every_n': 4, 
-#     'save_every_n': 5,        
-#     'batch_size': 64,
-#     'buf_size': 2**16,
-
-#     'nSims_train': 25,
-#     'nSims_eval': 25,
-
-#     'nIters': 100000, 
-#     'tempThreshold': 15,    
-#     'checkpoint_dir': './111022533/temp/', 
-# })
 
 
-
-    
-
-   
-class Game():
-
-    actionSize = 64
-    boardShape = (4,4,4)
-    action_decode_map = np.arange(actionSize).reshape(boardShape)
-
-    def __init__(self, board=np.zeros(boardShape), player=1):
-       
-        self.t = 0
-        self.board = np.copy(board)
-        self.player = player
-
-        self.validActions = np.zeros(Game.actionSize)
-        for a in range(Game.actionSize):
-            z,y,x = Game.decode_action(a)
-            if(self.board[z][y][x] == 0):
-                self.validActions[a] = 1
-
-        if Game.has_winner(self.board):
-            self.winner = -self.player
-            self.done = True
-        elif sum(self.validActions) < 0.5:
-            self.winner = 0
-            self.done = True
-        else:
-            self.winner = 0 
-            self.done = False          
  
-    def getTimeStep(self):
-        return self.t
 
-    def getWinner(self):
-        return self.winner 
 
-    def is_done(self):
-        return self.done
 
-    def getState(self): # player + board
-        return np.hstack((np.array([self.getPlayer()]), self.getBoard().reshape(Game.actionSize)))
 
-    def getPlayer(self):
-        return  self.player
+class Board():
 
-    def getBoard(self):
-        return np.copy(self.board)
+    # list of all 8 directions on the board, as (x,y) offsets
+    __directions = [(1,1),(1,0),(1,-1),(0,-1),(-1,-1),(-1,0),(-1,1),(0,1)]
+
+    def __init__(self, n=3):
+        "Set up initial board configuration."
+
+        self.n = n
+        # Create the empty board array.
+        self.pieces = np.zeros((n,n,n))
+
+    # add [][] indexer syntax to the Board
+    def __getitem__(self, index): 
+        index1 = [None,None,None]
+        for i in range(3):
+            index1[i] = str(index[i])
+        for i in range(len(index1)):
+            x = index1[i]
+            index1[i] = str(int(x) - 1)
+        return self.pieces[list(map(int, index1))]
+
+    def get_legal_moves(self, color):
+        """Returns all the legal moves for the given color.
+        (1 for white, -1 for black)
+        @param color not used and came from previous version.        
+        """
+        moves = set()  # stores the legal moves.
+
+        # Get all the empty squares (color==0)
+        for z in range(self.n): 
+            for y in range(self.n):
+                for x in range(self.n):
+                    if self.pieces[z][x][y]==0:
+                        newmove = (z,x,y)
+                        moves.add(newmove)
+        return list(moves)
+
+    def has_legal_moves(self):
+        for z in range(self.n):
+            for y in range(self.n):
+                for x in range(self.n):
+                    if self.pieces[z][x][y]==0:
+                        return True
+        return False
     
-    def getPrimeBoard(self):
-        return np.copy(self.board) * self.player
+    def is_win(self, color):
+        """Check whether the given player has collected a triplet in any direction; 
+        @param color (1=white,-1=black)
+        """
+        win = self.n
+        # check z-dimension
+        count = 0
+        for z in range(self.n):
+            count = 0
+            for y in range(self.n):
+                count = 0
+                for x in range(self.n):
+                    if self.pieces[z,x,y]==color:
+                        count += 1
+                if count==win:
+                    return True
 
-    def getValidActions(self):
-        return np.copy(self.validActions)
-
-    def duplicate(self):
-        return deepcopy(self)
-
-    def step(self, a):
-        assert not self.is_done()
-        assert self.validActions[a]
-        self.validActions[a] = 0
-
-        z,y,x = Game.decode_action(a)    
-        self.board[z][y][x] = self.player
-                
-        if Game.has_winner(self.board):
-            self.winner = self.player
-            self.done = True
-        elif sum(self.validActions) < 0.5:
-            self.done = True
-        else:
-            self.player = -self.player 
+        count = 0
+        for z in range(self.n):
+            count = 0
+            for x in range(self.n):
+                count = 0
+                for y in range(self.n):
+                    if self.pieces[z,x,y]==color:
+                        count += 1
+                if count==win:
+                    return True
         
-        self.t += 1
+        # check x dimension
+        count = 0
+        for x in range(self.n):
+            count = 0
+            for z in range(self.n):
+                count = 0
+                for y in range(self.n):
+                    if self.pieces[z,x,y]==color:
+                        count += 1
+                if count==win:
+                    return True
 
-    @staticmethod
-    def encode_action(a):
-        return a[0] + 4*a[1] + 16*a[2]
+        count = 0
+        for x in range(self.n):
+            count = 0
+            for y in range(self.n):
+                count = 0
+                for z in range(self.n):
+                    if self.pieces[z,x,y]==color:
+                        count += 1
+                if count==win:
+                    return True
 
-    @staticmethod
-    def decode_action(a):
-        return np.argwhere(Game.action_decode_map==a)[0]   
+        # check y dimension
+        count = 0
+        for y in range(self.n):
+            count = 0
+            for x in range(self.n):
+                count = 0
+                for z in range(self.n):
+                    if self.pieces[z,x,y]==color:
+                        count += 1
+                if count==win:
+                    return True
+        
+        count = 0
+        for y in range(self.n):
+            count = 0
+            for z in range(self.n):
+                count = 0
+                for x in range(self.n):
+                    if self.pieces[z,x,y]==color:
+                        count += 1
+                if count==win:
+                    return True
+        
+        # check flat diagonals
+        # check z dimension
+        count = 0
+        for z in range(self.n):
+            count = 0
+            for d in range(self.n):
+                if self.pieces[z,d,d]==color:
+                    count += 1
+            if count==win:
+                return True
+        
+        count = 0
+        for z in range(self.n):
+            count = 0
+            for d in range(self.n):
+                if self.pieces[z,d,self.n-d-1]==color:
+                    count += 1
+            if count==win:
+                return True
 
-    @staticmethod
-    def encode_state(board):
-        return board.tostring()
+        # check x dimension
+        count = 0
+        for x in range(self.n):
+            count = 0
+            for d in range(self.n):
+                if self.pieces[d,x,d]==color:
+                    count += 1
+            if count==win:
+                return True
 
-    @staticmethod
-    def has_winner(board): 
+        count = 0
+        for x in range(self.n):
+            count = 0
+            for d in range(self.n):
+                if self.pieces[d,x,self.n-d-1]==color:
+                    count += 1
+            if count==win:
+                return True
 
-        n = Game.boardShape[0]
+        # check y dimension
+        count = 0
+        for y in range(self.n):
+            count = 0
+            for d in range(self.n):
+                if self.pieces[d,d,y]==color:
+                    count += 1
+            if count==win:
+                return True
 
-        def reduce(v): return int(abs(sum(v)))
-   
-        for z in range(n):
-            for y in range(n):                
-                if(reduce(board[z,y,:]) == n): return True 
-        for z in range(n):
-            for x in range(n):                
-                if(reduce(board[z,:,x]) == n): return True 
-        for y in range(n):
-            for x in range(n):                
-                if(reduce(board[:,y,x]) == n): return True
- 
-        for z in range(n):
-            if(reduce([board[z,i,i] for i in range(4)]) == n): return True
-            if(reduce([board[z,i,n-i-1] for i in range(4)]) == n): return True            
-        for y in range(n):
-            if(reduce([board[i,y,i] for i in range(4)]) == n): return True
-            if(reduce([board[i,y,n-i-1] for i in range(4)]) == n): return True            
-        for x in range(n):
-            if(reduce([board[i,i,x] for i in range(4)]) == n): return True
-            if(reduce([board[n-i-1,i,x] for i in range(4)]) == n): return True
-
-        if(reduce([board[i,i,i] for i in range(4)]) == n): return True
-        if(reduce([board[n-i-1,i,i] for i in range(4)]) == n): return True
-        if(reduce([board[n-i-1,n-i-1,i] for i in range(4)]) == n): return True
-        if(reduce([board[i,n-i-1,i] for i in range(4)]) == n): return True
+        count = 0
+        for y in range(self.n):
+            count = 0
+            for d in range(self.n):
+                if self.pieces[self.n-d-1,d,y]==color:
+                    count += 1
+            if count==win:
+                return True
+        
+        # check 4 true diagonals
+        count = 0
+        if self.pieces[0,0,0] == color:
+            count += 1
+            if self.pieces[1,1,1] == color:
+                count += 1
+                if self.pieces[2,2,2] == color:
+                    count += 1
+                    if count == win:
+                        return True
             
+        count = 0
+        if self.pieces[2,0,0] == color:
+            count += 1
+            if self.pieces[1,1,1] == color:
+                count += 1
+                if self.pieces[0,2,2] == color:
+                    count += 1
+                    if count == win:
+                        return True
+        
+        count = 0
+        if self.pieces[2,2,0] == color:
+            count += 1
+            if self.pieces[1,1,1] == color:
+                count += 1
+                if self.pieces[0,0,2] == color:
+                    count += 1
+                    if count == win:
+                        return True
+        
+        count = 0
+        if self.pieces[0,2,0] == color:
+            count += 1
+            if self.pieces[1,1,1] == color:
+                count += 1
+                if self.pieces[2,0,2] == color:
+                    count += 1
+                    if count == win:
+                        return True
+
+        # return false if no 3 is reached
         return False
 
-    @staticmethod
-    def getSymmetries(board, pi):
+    def execute_move(self, move, color):
+        """Perform the given move on the board; 
+        color gives the color pf the piece to play (1=white,-1=black)
+        """
+
+        (z,x,y) = move
+
+        # Add the piece to the empty square.
+        assert self.pieces[z][x][y] == 0
+        self.pieces[z][x][y] = color
+
+class Game():
+    boardShape = (4,4,4)
+    coord2actionId = np.arange(64).reshape(boardShape)
+
+    def __init__(self, n):
+        self.n = n
+
+    def getInitBoard(self):
+        # return initial board (numpy board)
+        b = Board(self.n)
+        return np.array(b.pieces)
+
+    def getBoardSize(self):
+        # (a,b) tuple
+        return (self.n, self.n, self.n)
+
+    def getActionSize(self):
+        # return number of actions
+        return self.n*self.n*self.n
+
+    def getNextState(self, board, player, action):
+        # if player takes action on board, return next (board,player)
+        # action must be a valid move
+        if action == self.n*self.n*self.n:
+            return (board, -player)
+        b = Board(self.n)
+        b.pieces = np.copy(board)
+        boardvalues = np.arange(0,(self.n*self.n*self.n)).reshape(self.n,self.n,self.n)
+        
+        move = np.argwhere(boardvalues==action)[0]
+        b.execute_move(move, player)
+        return (b.pieces, -player)
+
+    def getValidMoves(self, board, player):
+        # return a fixed size binary vector
+        valids = [0]*self.getActionSize()
+        b = Board(self.n)
+        b.pieces = np.copy(board)
+        legalMoves =  b.get_legal_moves(player)
+        if len(legalMoves)==0:
+            valids[-1]=1
+            return np.array(valids)
+        for z, x, y in legalMoves:
+            boardvalues = np.arange(0,(self.n*self.n*self.n)).reshape(self.n,self.n,self.n)
+            valids[boardvalues[z][x][y]] = 1
+        return np.array(valids)
+
+    def getGameEnded(self, board, player):
+        # return 0 if not ended, 1 if player 1 won, -1 if player 1 lost
+        # player = 1
+        b = Board(self.n)
+        b.pieces = np.copy(board)
+
+        if b.is_win(player):
+            return 1
+        if b.is_win(-player):
+            return -1
+        if b.has_legal_moves():
+            return 0
+        # draw has a very little value 
+        return 1e-4
+
+    def getCanonicalForm(self, board, player):
+
+        # board: an np array of shape 4x4x4
+
+        # return state if player==1, else return -state if player==-1
+        return player*board
+
+
+    def getSymmetries(self, board, pi):
         # mirror, rotational
-        n = Game.boardShape[0]
- 
+        pi_board = np.reshape(pi, (self.n, self.n, self.n))
         l = []
-        newB = np.reshape(board, (n*n, n))
-        newPi = np.reshape(pi, Game.boardShape)
+        newB = np.reshape(board, (self.n*self.n, self.n))
+        newPi = pi_board
         for i in range(1,5):
 
             for z in [True, False]:
@@ -206,26 +391,35 @@ class Game():
                         newB = np.flipud(newB)
                         newPi = np.flipud(newPi)
                     
-                    newB = np.reshape(newB, Game.boardShape)
-                    newPi = np.reshape(newPi, Game.boardShape)
+                    newB = np.reshape(newB, (self.n,self.n,self.n))
+                    newPi = np.reshape(newPi, (self.n,self.n,self.n))
                     l += [(newB, list(newPi.ravel()))]
-        return l 
+        return l
     
+
+
+    def stringRepresentation(self, board):
+        # 8x8 numpy array (canonical board)
+        return board.tostring()
  
 
 
+
  
-class Model(tf.keras.Model):
+
+class Agent(tf.keras.Model):
 
     def __init__(self):
   
-        super(Model, self).__init__() 
+        super(Agent, self).__init__() 
 
         self.act = {}
         self.bn = {}
         self.conv = {}    
         padding = ['same', 'same', 'valid']
         n_filter = 128
+
+        self.game = Game(4)
 
         for i in range(3):
             self.act[i] = tf.keras.layers.Activation('relu')
@@ -244,7 +438,7 @@ class Model(tf.keras.Model):
         self.bn2 = tf.keras.layers.BatchNormalization(axis=1)
         self.fc2 = tf.keras.layers.Dense(256)  
 
-        self.fc_a = tf.keras.layers.Dense(Game.actionSize, activation='softmax')  
+        self.fc_a = tf.keras.layers.Dense(self.game.getActionSize(), activation='softmax')  
         self.fc_v = tf.keras.layers.Dense(1, activation='tanh')         
        
         self.optimizer = tf.keras.optimizers.Adam(0.001)
@@ -297,6 +491,7 @@ class Model(tf.keras.Model):
  
             total_loss = (a_loss + v_loss)
 
+  
         gradients = tape.gradient(total_loss, self.trainable_variables) 
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
     
@@ -311,12 +506,13 @@ class Model(tf.keras.Model):
         a_prob = tf.convert_to_tensor(a_prob, dtype=tf.float32)
         v = tf.convert_to_tensor(v, dtype=tf.float32)
         a_loss, v_loss = self._train_step((x, a_prob, v))
+        # print(f'a_loss, v_loss: {a_loss}, {v_loss}')
         return a_loss.numpy(), v_loss.numpy()
         
   
-    def _predict(self, game): 
+    def _predict(self, canonboard): 
 
-        board = game.getPrimeBoard()
+        board = canonboard
         board = board[np.newaxis, :, :] 
         board = tf.convert_to_tensor(board, dtype=tf.float32) 
         pi, v = self(board) 
@@ -327,14 +523,18 @@ class Model(tf.keras.Model):
         K.clear_session()
         tf.keras.backend.clear_session() 
 
-        valids = game.getValidActions()
-        pi = pi * valids  
-        if np.sum(pi) > 0: pi = pi / np.sum(pi)  
-        else: pi = valids / np.sum(valids)
+        mask = self.game.getValidMoves(canonboard, 1)
+        pi = pi * mask  
+
+        sum_Ps_s = np.sum(pi)
+        if sum_Ps_s > 0:
+            pi /= sum_Ps_s  
+        else:
+            pi = pi + valids
+            pi /= np.sum(pi)
 
         return pi, v 
  
-
     def save_checkpoint(self, path):  
         print(f'saved ckpt {path}') 
         self.save_weights(path)
@@ -348,47 +548,59 @@ class Model(tf.keras.Model):
 
 
 
-class Agent(Model):
-     
-    def __init__(self, para):
-        super().__init__()  
 
-        self.para = para     
+
+
+class MCTSAgent(Agent):
+     
+    def __init__(self, args):
+        super().__init__()  
+        self.game = game
+        self.args = args    
         self.reset()
 
-    def set_n_sim(self, n):
-        self.para.nSims = n
 
-    def reset(self):
-        self.Qsa = {}  # stores Q values for s,a (as defined in the paper)
-        self.Nsa = {}  # stores #times edge s,a was visited
-        self.Ns = {}  # stores #times board s was visited 
-        self.Ps = {}  # stores initial policy (returned by neural net) 
-        
     def choose_action(self, state):
 
         player = state[0]
-        board = np.reshape(state[1:], Game.boardShape)
-        game = Game(board, player)
-
-        a = np.argmax(self.predict(game))
-        z,y,x = Game.decode_action(a) 
-        assert board[z][y][x] == 0
-        return [x, y, z]
-     
-
-    def predict(self, game, temp=1):
-        """
-        temp: smaller is sharper (more deterministic).
-        """
-
-        for i in range(self.para.nSims):
-            self.search(game.duplicate())
-
-        s = Game.encode_state(game.getPrimeBoard())
-        counts = [self.Nsa[s][a] if a in self.Nsa[s] else 0 for a in range(Game.actionSize)]
+        board = state[1:] 
+        canonBoard = board.reshape(Game.boardShape) * player
+        
+        a = np.argmax(self.predict(canonBoard))
  
-        if temp == 0: # deterministic
+        (z,y,x) = np.argwhere(Game.coord2actionId == a)[0] 
+        assert canonBoard[z][y][x] == 0
+
+        return [x, y, z]
+    
+ 
+
+    def set_n_sim(self, n):
+        self.args.nSims = n
+        
+    def reset(self):
+        self.Qsa = {}  # stores Q values for s,a (as defined in the paper)
+        self.Nsa = {}  # stores #times edge s,a was visited
+        self.Ns = {}  # stores #times board s was visited
+        self.Ps = {}  # stores initial policy (returned by neural net)
+
+        self.Es = {}  # stores game.getGameEnded ended for board s
+        self.Vs = {}  # stores game.getValidMoves for board s
+
+  
+
+    def predict(self, canonBoard, temp=1):
+        """
+            canonBoard: cannot be terminal state.
+        """
+        for i in range(self.args.nSims):
+            self.search(canonBoard)
+
+        s = self.game.stringRepresentation(canonBoard)
+        counts = [self.Nsa[(s, a)] if (s, a) in self.Nsa else 0 for a in range(self.game.getActionSize())]
+        # counts = [self.Nsa[s][a] if a in self.Nsa[s] else 0 for a in range(game.getActionSize())]
+ 
+        if temp == 0: # yes for pit, no for train
             bestAs = np.array(np.argwhere(counts == np.max(counts))).flatten()
             bestA = np.random.choice(bestAs)
             probs = [0] * len(counts)
@@ -402,108 +614,103 @@ class Agent(Model):
         return probs
  
 
-    def search(self, game): 
-        """
-        select & expand-> simulate -> backprop
-        """
-        trajectory, game = self.select_expand(game)
-        reward = self.simulate(game) 
-        self.backprop(trajectory, reward)
- 
+    def search(self, canonicalBoard):
 
-    def select_expand(self, game):
+        s = self.game.stringRepresentation(canonicalBoard)
 
-        trajectory = {1: [], -1: []}
-        while(True):  
-            
-            s = Game.encode_state(game.getPrimeBoard())
-            if s not in self.Ps: # terminal or first visit.
-                return trajectory, game
-            
-            a = self.max_a(s) 
-            trajectory[game.getPlayer()].append((s, a))
- 
-            game.step(a)
+        if s not in self.Es:
+            self.Es[s] = self.game.getGameEnded(canonicalBoard, 1)
 
-       
-    def simulate(self, game):
-        
-        reward = {1: 0, -1: 0}
+        if self.Es[s] != 0: # if ended.
+            # terminal node
+            return -self.Es[s] # end results of game: 1, -1, 1e-4.
 
-        if game.is_done(): 
-            winner = game.getWinner() 
-            if winner != 0:
-                reward[winner] = 1
-                reward[-winner] = -1  
-            return reward          
+        if s not in self.Ps:
 
-        # first visit
+            # leaf node
+            # self.Ps[s]: 1d array, probability over all actions.
+            self.Ps[s], v = self._predict(canonicalBoard)
 
-        s = Game.encode_state(game.getPrimeBoard())
+            # a list of 0 and 1.
+            valids = self.game.getValidMoves(canonicalBoard, 1)
 
-        self.Ps[s], v = self._predict(game)          
-        self.Qsa[s] = {}
-        self.Nsa[s] = {}
+            self.Ps[s] = self.Ps[s] * valids  # masking invalid moves
 
-        valids = game.getValidActions()        
-        for a in range(Game.actionSize):
+            sum_Ps_s = np.sum(self.Ps[s])
+            if sum_Ps_s > 0:
+                self.Ps[s] /= sum_Ps_s  # renormalize
+            else:
+                # if all valid moves were masked make all valid moves equally probable
+                self.Ps[s] = self.Ps[s] + valids
+                self.Ps[s] /= np.sum(self.Ps[s])
+
+            self.Vs[s] = valids
+            self.Ns[s] = 0
+            return -v
+
+        valids = self.Vs[s]
+        cur_best = -float('inf')
+        best_act = -1
+
+        # pick the action with the highest upper confidence bound
+        for a in range(self.game.getActionSize()):
             if valids[a]:
-                self.Qsa[s][a] = 0
-                self.Nsa[s][a] = 0
+                if (s, a) in self.Qsa:
+                    # 1st term "self.Qsa[(s, a)]": encourage exploitation.
+                    # 2nd term "(...) / (1 + self.Nsa[(s, a)])": encourage exploration.
+                    u = self.Qsa[(s, a)] + self.args.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s]) / (
+                            1 + self.Nsa[(s, a)])
+                else:
+                    u = self.args.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s] + 1e-8)  # Q = 0 ?
 
-        self.Ns[s] = 0
+                if u > cur_best:
+                    cur_best = u
+                    best_act = a
 
-        p = game.getPlayer()
-        reward[p] = v
-        reward[-p] = -v 
-                
-        return reward
+        a = best_act
 
+        # always get next state as player 1 (canonical).
+        next_s, next_player = self.game.getNextState(canonicalBoard, 1, a)
 
-    def backprop(self, trajectory, reward): 
-        for player in trajectory: 
-            for s, a in reversed(trajectory[player]): 
-                self.Qsa[s][a] = (self.Nsa[s][a] * self.Qsa[s][a] + reward[player]) / (self.Nsa[s][a] + 1)
-                self.Nsa[s][a] += 1 
-                self.Ns[s] += 1
+        next_s = self.game.getCanonicalForm(next_s, next_player)
+
+        v = self.search(next_s)
+
+        if (s, a) in self.Qsa:
+            # avg of all self.Nsa[(s, a)] + 1 Qsa's.
+            self.Qsa[(s, a)] = (self.Nsa[(s, a)] * self.Qsa[(s, a)] + v) / (self.Nsa[(s, a)] + 1)
+            self.Nsa[(s, a)] += 1
+        else:
+            self.Qsa[(s, a)] = v
+            self.Nsa[(s, a)] = 1
+
+        self.Ns[s] += 1
+        return -v
 
  
-    def max_a(self, s):
-        """ 
-            - pick the action with the highest upper confidence bound
-            - 1st term "self.Qsa[s][a]": encourage exploitation.
-            - 2nd term "(...) / (1 + self.Nsa[s][a])": encourage exploration.
-        """
-        bound_max = -float('inf')
-        a_max = None        
-        for a in self.Qsa[s].keys(): # all are valids actions.
-            bound = self.Qsa[s][a] + self.para.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s] + 1e-8) / (1 + self.Nsa[s][a])
-            if bound > bound_max:
-                bound_max = bound
-                a_max = a
-        
-        return a_max
+
+game = Game(4)
 
 
-
-
-class RandomAgent():
+class RandomPlayer():
     
     def choose_action(self, state):
-        
         player = state[0]
-        board = np.reshape(state[1:], Game.boardShape)
-        game = Game(board, player)
-
-        a = np.random.randint(Game.actionSize)
-        valids = game.getValidActions()
+        board = state[1:] 
+        canonBoard = board.reshape(Game.boardShape) * player
         
+        a = np.random.randint(game.getActionSize())
+        valids = game.getValidMoves(canonBoard, 1) 
         while valids[a]!=1:
-            a = np.random.randint(Game.actionSize)
+            a = np.random.randint(game.getActionSize())
 
-        z,y,x = Game.decode_action(a) 
-        assert board[z][y][x] == 0
+        (z,y,x) = np.argwhere(Game.coord2actionId == a)[0] 
+        assert canonBoard[z][y][x] == 0
+
         return [x, y, z]
+
+
+
 
 class ReplayBuffer():
 
@@ -538,14 +745,12 @@ class ReplayBuffer():
 
         print(f'loaded {len(self.buf)} examples')
  
-  
-
  
 class Trainer():
 
-    def __init__(self, agent, replayBuf, para): 
+    def __init__(self, mctsAgent, replayBuf, para): 
 
-        self.agent = agent
+        self.mctsAgent = mctsAgent
         self.para = para
         self.replayBuf = replayBuf
 
@@ -553,35 +758,40 @@ class Trainer():
 
         examples = []
 
-        self.agent.set_n_sim(self.para.nSims_train)
+        self.mctsAgent.set_n_sim(self.para.nSims_train)
 
         for j in range(self.para.nEps): 
             
-            self.agent.reset()
- 
-            game = Game()  
+            self.mctsAgent.reset()
+
+            board = game.getInitBoard()  
+            curPlayer = 1
+            t = 1
             epsExamples = []  
 
-            while not game.is_done():
+            while True:
                  
-                temp = int(game.getTimeStep() < self.para.tempThreshold)  
-                pi = self.agent.predict(game, temp=temp)
+                canonicalBoard = game.getCanonicalForm(board, curPlayer)
+
+                temp = int(t < self.para.tempThreshold)             
+                pi = self.mctsAgent.predict(canonicalBoard, temp=temp)
  
-                sym = Game.getSymmetries(game.getPrimeBoard(), pi) # data augmentation
+                sym = game.getSymmetries(canonicalBoard, pi) # data augmentation
                 for b, p in sym:
-                    epsExamples.append([b, p, game.getPlayer()])
+                    epsExamples.append([b, p, curPlayer])
 
-                action = np.random.choice(len(pi), p=pi)  
-                game.step(action)
-           
+                action = np.random.choice(len(pi), p=pi) 
+                # canonBoard = Game.getNextState(canonBoard, action) 
+                # curPlayer = -curPlayer 
 
-            winner = game.getWinner()  
-            reward = {1: 0, -1: 0}
-            if(winner != 0):
-                reward[winner] = 1
-                reward[-winner] = -1
-            examples.extend([(x[0], x[1], reward[x[2]]) for x in epsExamples]) 
-         
+                board, curPlayer = game.getNextState(board, curPlayer, action)
+
+                r = game.getGameEnded(board, curPlayer)
+                t += 1
+                 
+                if r != 0: 
+                    examples.extend([(x[0], x[1], r * ((-1) ** (x[2] != curPlayer))) for x in epsExamples]) 
+                    break
 
         return examples
         
@@ -597,7 +807,7 @@ class Trainer():
             self.replayBuf.addExamples(self.collectExamples())  
             examples = self.replayBuf.sample()
             
-            self.agent.save_checkpoint(self.para.checkpoint_dir + f'temp.h5')  
+            self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + f'temp.h5')  
 
             print('training...')            
             a_losses = []
@@ -606,8 +816,8 @@ class Trainer():
             for epoch in range(self.para.nEpochs):     
                 for j in range(n):
                     batch = examples[j*self.para.batch_size:(j+1)*self.para.batch_size] 
-                    a_loss, v_loss = self.agent.train_step(batch)
-                    # self.agent.train_step(batch)
+                    a_loss, v_loss = self.mctsAgent.train_step(batch)
+                    # self.mctsAgent.train_step(batch)
                     a_losses.append(a_loss)
                     v_losses.append(v_loss)
             print(f'a_loss: {np.mean(a_losses)}, v_loss: {np.mean(v_losses)}')
@@ -615,10 +825,12 @@ class Trainer():
 
             if i % self.para.save_every_n == 0:
                 self.replayBuf.save(self.para.checkpoint_dir + f'checkpoint_{i}.pth.tar.examples')
-                self.agent.save_checkpoint(self.para.checkpoint_dir + f'checkpoint_{i}.h5')        
+                self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + f'checkpoint_{i}.h5')        
  
             if i % self.para.evaluate_every_n == 0: 
+                self.evaluateRandom(self.para.nEvals)
                 self.evaluate(self.para.nEvals)
+                
 
 
                
@@ -627,159 +839,123 @@ class Trainer():
         
         print('pitting old model...')
 
-        mid = int(num / 2) 
-        
-        pnet = Agent(AttrDict({'nSims': self.para.nSims_eval, 'cpuct':1.0})) 
+        mid = int(num / 2)
+        oneWon = 0
+        twoWon = 0
+        draws = 0
+               
+        pnet = MCTSAgent(dotdict({'nSims': self.para.nSims_eval, 'cpuct':1.0})) 
         pnet.load_checkpoint(self.para.checkpoint_dir + f'temp.h5')                        
   
-        self.agent.set_n_sim(self.para.nSims_eval)
-
-        scores = {1: 0, -1: 0, 0: 0}
+        self.mctsAgent.set_n_sim(self.para.nSims_eval)
 
         for i in range(1, num+1) :
 
-            self.agent.reset()
+            self.mctsAgent.reset()
             pnet.reset()
-            players = {1: self.agent, -1: pnet}  
-
-            if(i < mid): game = Game(player = 1) 
-            else: game = Game(player = -1) 
-              
-            while not game.is_done():
-                action = players[game.getPlayer()].choose_action(game.getState())   
-                a = Game.encode_action(action)
-                valids = game.getValidActions()
-                assert valids[a] > 0
-                game.step(a)
-
-            winner = game.getWinner()
-            scores[winner] += 1 
-
-            print(f'[{i}/{num}] pwins: {scores[1]}, nwins: {scores[-1]}, draws: {scores[0]}') 
+            players = {1: self.mctsAgent, -1: pnet}
 
 
-        if scores[1] + scores[-1] == 0 or float(scores[1]) / (scores[1] + scores[-1]) < 0.5:
-            self.agent.load_checkpoint(self.para.checkpoint_dir + f'temp.h5')
-        else:
-            self.agent.save_checkpoint(self.para.checkpoint_dir + 'best.h5')
-
-
-    # def evaluate(self, num=10):
-        
-    #     print('pitting random model...')
-
-    #     mid = int(num / 2)
-    #     oneWon = 0
-    #     twoWon = 0
-    #     draws = 0
-        
-    #     self.agent.set_n_sim(self.para.nSims_eval)
-
-    #     for i in range(1, num+1) :
-
-    #         self.agent.reset()
+            if(i < mid): curPlayer = 1
+            else: curPlayer = -1
             
-    #         players = {1: self.agent, -1: RandomAgent()}
-
-
-    #         if(i < mid): curPlayer = 1
-    #         else: curPlayer = -1
-            
-    #         PrimeBoard = Game.getInitBoard()
+            board = game.getInitBoard()
         
-    #         while Game.getGameEnded(PrimeBoard) == 0:
+            while game.getGameEnded(board, curPlayer) == 0:
                 
-    #             board = PrimeBoard * curPlayer
-    #             state = np.hstack((np.array([curPlayer]), board.reshape(Game.actionSize)))
+                
+                canonBoard = board*curPlayer
+                state = np.hstack((np.array([curPlayer]), board.reshape(game.getActionSize())))
 
-    #             a = players[curPlayer].choose_action(state) 
-    #             actionId = a[0] + 4*a[1] + 16*a[2]
-    #             valids = Game.getValidMoves(PrimeBoard)
+                a = players[curPlayer].choose_action(state) 
+                actionId = a[0] + 4*a[1] + 16*a[2]
+                valids = game.getValidMoves(canonBoard, 1)
                 
-    #             assert valids[actionId] > 0
+                assert valids[actionId] > 0
     
-    #             PrimeBoard = Game.getNextState(PrimeBoard, actionId) 
-    #             curPlayer = -curPlayer
+                board, curPlayer = game.getNextState(board, curPlayer, actionId) 
+        
 
-    #         r = curPlayer * Game.getGameEnded(PrimeBoard)
+            r = curPlayer * game.getGameEnded(board, curPlayer)
                         
-    #         if r == 1: oneWon += 1
-    #         elif r == -1: twoWon += 1
-    #         else: draws += 1       
+            if r == 1: oneWon += 1
+            elif r == -1: twoWon += 1
+            else: draws += 1       
 
-    #         print(f'[{i}/{num}] pwins: {oneWon}, nwins: {twoWon}, draws: {draws}') 
+            print(f'[{i}/{num}] pwins: {oneWon}, nwins: {twoWon}, draws: {draws}') 
+
+
+        if twoWon + oneWon == 0 or float(oneWon) / (twoWon + oneWon) < 0.5:
+            self.mctsAgent.load_checkpoint(self.para.checkpoint_dir + f'temp.h5')
+        else:
+            self.mctsAgent.save_checkpoint(self.para.checkpoint_dir + 'best.h5')
+
+
+
+    def evaluateRandom(self, num=10):
+        
+        print('pitting random model...')
+
+        mid = int(num / 2)
+        oneWon = 0
+        twoWon = 0
+        draws = 0
+                     
+  
+        self.mctsAgent.set_n_sim(self.para.nSims_eval)
+
+        for i in range(1, num+1) :
+
+            self.mctsAgent.reset() 
+            players = {1: self.mctsAgent, -1: RandomPlayer()}
+
+
+            if(i < mid): curPlayer = 1
+            else: curPlayer = -1
+            
+            board = game.getInitBoard()
+        
+            while game.getGameEnded(board, curPlayer) == 0:
+                
+                canonBoard = board*curPlayer
+                state = np.hstack((np.array([curPlayer]), board.reshape(game.getActionSize())))
+
+                a = players[curPlayer].choose_action(state) 
+                actionId = a[0] + 4*a[1] + 16*a[2]
+                valids = game.getValidMoves(canonBoard, 1)
+                
+                assert valids[actionId] > 0
+    
+                board, curPlayer = game.getNextState(board, curPlayer, actionId) 
+        
+
+            r = curPlayer * game.getGameEnded(board, curPlayer)
+                        
+            if r == 1: oneWon += 1
+            elif r == -1: twoWon += 1
+            else: draws += 1       
+
+            print(f'[{i}/{num}] pwins: {oneWon}, nwins: {twoWon}, draws: {draws}') 
+
  
- 
-
-
 
 def train(): 
 
 
-    agent_para = AttrDict({   
+    agent_para = dotdict({   
         'nSims': 25,  
         'cpuct':1.0
     })
  
-    agent = Agent(agent_para)
-    # agent.load_checkpoint('./temp/checkpoint_18.h5')
-    # agent.load_checkpoint('./111022533/temp/checkpoint_25.h5')
+    mctsAgent = MCTSAgent(agent_para) 
  
-    # module = importlib.import_module('111022533_hw1_4_test')
-    # agent = module.Agent() 
-    # agent.load_policy()
- 
-    replayBuf = ReplayBuffer(training_para.buf_size)
-    # replayBuf.load('./111022533/temp/checkpoint_25.pth.tar.examples')
-
-    # agent.save_checkpoint(training_para.checkpoint_dir + f'temp.h5')  
-
-    # trainer = Trainer(agent, replayBuf, training_para)
-    trainer = Trainer(agent, replayBuf, training_para)
+    replayBuf = ReplayBuffer(training_para.buf_size) 
+    trainer = Trainer(mctsAgent, replayBuf, training_para)
     trainer.train()
 
-
-
-# train()
-
-
-
-
-        
-
-def evaluate(num=10):
-    
-    print('pitting random model...')
-
-    mid = int(num / 2) 
  
-    agent = Agent(AttrDict({   
-        'nSims': 50,  
-        'cpuct':1.0
-    }))
-    agent.load_checkpoint('./111022533/temp/checkpoint_45.h5')
-    
-    scores = {1: 0, -1: 0, 0: 0}
+train()
 
-    for i in range(1, num+1) :
 
-        agent.reset()
-        players = {1: agent, -1: RandomAgent()}  
 
-        if(i < mid): game = Game(player = 1) 
-        else: game = Game(player = -1) 
-            
-        while not game.is_done():
-            action = players[game.getPlayer()].choose_action(game.getState())   
-            a = Game.encode_action(action)
-            valids = game.getValidActions()
-            assert valids[a] > 0
-            game.step(a)
 
-        winner = game.getWinner()
-        scores[winner] += 1 
-
-        print(f'[{i}/{num}] pwins: {scores[1]}, nwins: {scores[-1]}, draws: {scores[0]}') 
-
- 
-evaluate()
