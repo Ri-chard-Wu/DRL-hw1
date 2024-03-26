@@ -214,8 +214,6 @@ def train():
 # train()
 
 
- 
-
 def evaluate(num=100):
     
     print('pitting random model...')
@@ -246,10 +244,16 @@ def evaluate(num=100):
             assert valids[a] > 0
             game.step(a)
 
+        # print(f'board: {game.getBoard()}')
         winner = game.getWinner()
         scores[winner] += 1 
 
         print(f'[{i}/{num}] agent: {scores[1]}, random: {scores[-1]}, draw: {scores[0]}') 
 
  
+# agent = module.Agent()  
+# agent(tf.random.uniform(shape=[1,4,4,4]))
+# agent.save_checkpoint('./111022533/111022533_hw1_4_data.h5')
+
+
 evaluate()

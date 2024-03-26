@@ -6,6 +6,15 @@ import tensorflow.keras.backend as K
 import tensorflow as tf
 from copy import deepcopy
 
+import os
+os.environ['CUDA_VISIBLE_DEVICES']=''
+
+# n = len(tf.config.experimental.list_physical_devices('GPU'))
+# print('################')
+# print(f'visible gpus: {n}')
+# print('################')
+
+
 
 class AttrDict(dict):
     def __getattr__(self, a):
@@ -391,7 +400,8 @@ class Agent(Model):
 
         s = Game.encode_state(game.getPrimeBoard())
 
-        self.Ps[s], v = self._predict(game)          
+        self.Ps[s], v = self._predict(game) 
+        # print(f'self.Ps[s]: {self.Ps[s]}, v: {v}')         
         self.Qsa[s] = {}
         self.Nsa[s] = {}
 
